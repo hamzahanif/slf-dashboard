@@ -4,9 +4,9 @@ import { VA_SHEETS, QA_TRACKER } from "@/lib/config";
 
 export async function GET() {
   try {
-    const qaRows = await fetchSheet(QA_TRACKER.id, QA_TRACKER.sheetName).catch(() => []);
+    const qaRows = await fetchSheet(QA_TRACKER.spreadsheetId, QA_TRACKER.gid).catch(() => []);
     const vaRowArrays = await Promise.all(
-      VA_SHEETS.map(s => fetchSheet(s.id, s.sheetName).catch(() => []))
+      VA_SHEETS.map(s => fetchSheet(s.spreadsheetId, s.gid).catch(() => []))
     );
     const allRows = qaRows.length > 0 ? qaRows : vaRowArrays.flat();
     return NextResponse.json({ rows: allRows });

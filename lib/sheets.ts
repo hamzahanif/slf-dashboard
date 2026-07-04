@@ -2,14 +2,12 @@ export interface Row {
   [key: string]: string;
 }
 
-// Fetch a public Google Sheet tab as array of row objects keyed by header name
-export async function fetchSheet(sheetId: string, sheetName: string): Promise<Row[]> {
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
-  const res = await fetch(url, { next: { revalidate: 300 } }); // cache 5 min
-  if (!res.ok) throw new Error(`Failed to fetch sheet: ${sheetName}`);
+export async function fetchSheet(spreadsheetId: string, gid: string): Promise<Row[]> {
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&gid=${gid}`;
+  const res = await fetch(url, { next: { revalidate: 300 } });
+  if (!res.ok) throw new Error(`Failed to fetch gid=${gid}: ${res.status}`);
 
   const text = await res.text();
-  // gviz wraps response in /*O_o*/ google.visualization.Query.setResponse({...});
   const jsonStr = text.replace(/^.*?\(/, "").replace(/\);?\s*$/, "");
   const json = JSON.parse(jsonStr);
 
@@ -17,11 +15,11 @@ export async function fetchSheet(sheetId: string, sheetName: string): Promise<Ro
   const rows: Row[] = (json.table.rows || []).map((r: { c: Array<{ v: string | null } | null> }) => {
     const row: Row = {};
     cols.forEach((col, i) => {
-      row[col] = r.c?.[i]?.v?.toString() ?? "";
+      const cell = r.c?.[i];
+      row[col] = cell?.v?.toString() ?? "";
     });
     return row;
   });
 
-  // Skip rows where all values are empty
   return rows.filter(r => Object.values(r).some(v => v !== ""));
 }

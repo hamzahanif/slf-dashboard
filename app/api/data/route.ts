@@ -5,16 +5,13 @@ import { buildVAStats, detectGlitches, buildSummary } from "@/lib/analytics";
 
 export async function GET() {
   try {
-    // Fetch QA tracker (always present)
-    const qaRows = await fetchSheet(QA_TRACKER.id, QA_TRACKER.sheetName).catch(() => []);
+    const qaRows = await fetchSheet(QA_TRACKER.spreadsheetId, QA_TRACKER.gid).catch(() => []);
 
-    // Fetch all VA sheets and merge
     const vaRowArrays = await Promise.all(
-      VA_SHEETS.map(s => fetchSheet(s.id, s.sheetName).catch(() => []))
+      VA_SHEETS.map(s => fetchSheet(s.spreadsheetId, s.gid).catch(() => []))
     );
     const vaRows = vaRowArrays.flat();
 
-    // Combine all rows for analytics (QA tracker is the source of truth when available)
     const allRows = qaRows.length > 0 ? qaRows : vaRows;
 
     const vaStats = buildVAStats(allRows);
