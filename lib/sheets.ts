@@ -11,7 +11,7 @@ export async function fetchSheet(spreadsheetId: string, gid: string): Promise<Ro
   const jsonStr = text.replace(/^.*?\(/, "").replace(/\);?\s*$/, "");
   const json = JSON.parse(jsonStr);
 
-  const cols: string[] = json.table.cols.map((c: { label: string }) => c.label || "");
+  const cols: string[] = json.table.cols.map((c: { label: string }) => (c.label || "").trim());
   const rows: Row[] = (json.table.rows || []).map((r: { c: Array<{ v: string | null } | null> }) => {
     const row: Row = {};
     cols.forEach((col, i) => {
