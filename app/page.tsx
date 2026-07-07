@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import type { Glitch, SummaryStats } from "@/lib/analytics";
 
-type Tab = "overview" | "performance" | "qa" | "data";
+type Tab = "overview" | "performance" | "postcheck" | "qa" | "data";
 type Preset = "today" | "yesterday" | "week" | "month" | "custom" | "alltime";
 
 interface DashData {
@@ -96,6 +96,76 @@ function buildVAStats(rows: Row[]): VAStat[] {
     .sort((a, b) => b.count - a.count);
 }
 
+// ---- Phase 1: Comment Status helpers ----
+// Reads the "Comment Status" column gracefully (may not exist on old rows)
+type StatusBucket = "approved" | "pending" | "rejected" | "none";
+
+function getStatus(row: Row): StatusBucket {
+  const raw = (row["Comment Status"] ?? row["Comment status"] ?? row["Status"] ?? "").toString().trim().toLowerCase();
+  if (!raw) return "none";
+  if (raw.includes("approv") || raw.includes("live") || raw.includes("pass")) return "approved";
+  if (raw.includes("reject") || raw.includes("declin") || raw.includes("fail")) return "rejected";
+  if (raw.includes("pend") || raw.includes("wait")) return "pending";
+  return "none";
+}
+
+interface ApprovalStat {
+  approved: number;
+  pending: number;
+  rejected: number;
+  tracked: number; // rows that have any status
+  rate: number;    // approved / tracked (0 if none tracked)
+}
+
+function computeApproval(rows: Row[]): ApprovalStat {
+  let approved = 0, pending = 0, rejected = 0;
+  for (const row of rows) {
+    const s = getStatus(row);
+    if (s === "approved") approved++;
+    else if (s === "pending") pending++;
+    else if (s === "rejected") rejected++;
+  }
+  const tracked = approved + pending + rejected;
+  return { approved, pending, rejected, tracked, rate: tracked ? Math.round((approved / tracked) * 100) : 0 };
+}
+
+// Normalize a FB post URL for duplicate matching (strip query, trailing slash, mobile prefix)
+function normalizeUrl(url: string): string {
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^(www\.|m\.|web\.)/, "")
+    .replace(/\?.*$/, "")
+    .replace(/\/$/, "");
+}
+
+interface UrlMatch {
+  row: Row;
+  vaName: string;
+  date: string;
+  status: StatusBucket;
+}
+
+function findUrlMatches(rows: Row[], query: string): UrlMatch[] {
+  const q = normalizeUrl(query);
+  if (!q) return [];
+  return rows
+    .filter(r => {
+      const u = r["Direct Facebook Post URL"];
+      return u && normalizeUrl(u) === q;
+    })
+    .map(r => ({
+      row: r,
+      vaName: r["VA Name"]?.trim() || "Unknown",
+      date: (() => {
+        const d = parseRowDate(r["Date"]);
+        return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+      })(),
+      status: getStatus(r),
+    }));
+}
+
 function formatDateLabel(range: [Date, Date] | null, preset: Preset): string {
   if (!range) return "All Time";
   const [start, end] = range;
@@ -118,6 +188,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [glitchFilter, setGlitchFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [checkUrl, setCheckUrl] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -137,6 +208,11 @@ export default function Dashboard() {
   const filteredRows = useMemo(() => filterRowsByRange(rows, dateRange), [rows, dateRange]);
 
   const vaStats = useMemo(() => buildVAStats(filteredRows), [filteredRows]);
+
+  const approval = useMemo(() => computeApproval(filteredRows), [filteredRows]);
+
+  // Post-check always searches ALL rows (not date-filtered) — a dupe from last month still counts
+  const urlMatches = useMemo(() => findUrlMatches(rows, checkUrl), [rows, checkUrl]);
 
   const searchedRows = useMemo(() => {
     if (!search.trim()) return filteredRows;
@@ -168,6 +244,7 @@ export default function Dashboard() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "performance", label: "Performance" },
+    { id: "postcheck", label: "Post Check" },
     { id: "qa", label: "QA & Glitches" },
     { id: "data", label: "Raw Data" },
   ];
@@ -285,6 +362,31 @@ export default function Dashboard() {
                   <StatCard label="Duplicate URLs" value={filteredGlitches.filter(g => g.type === "duplicate_url").length} color="yellow" />
                 </div>
 
+                {/* Comment approval summary */}
+                {approval.tracked > 0 ? (
+                  <div className="bg-white rounded-xl border border-slate-200 p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="font-semibold text-slate-800">Comment Approval — {dateLabel}</h2>
+                      <span className="text-2xl font-bold text-green-600">{approval.rate}%</span>
+                    </div>
+                    <div className="flex h-3 rounded-full overflow-hidden bg-slate-100">
+                      <div className="bg-green-500" style={{ width: `${(approval.approved / approval.tracked) * 100}%` }} />
+                      <div className="bg-amber-400" style={{ width: `${(approval.pending / approval.tracked) * 100}%` }} />
+                      <div className="bg-red-400" style={{ width: `${(approval.rejected / approval.tracked) * 100}%` }} />
+                    </div>
+                    <div className="flex gap-5 mt-3 text-xs text-slate-500">
+                      <span><span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1" />Approved/Live {approval.approved}</span>
+                      <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1" />Pending {approval.pending}</span>
+                      <span><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-1" />Rejected {approval.rejected}</span>
+                      <span className="ml-auto">{approval.tracked} of {filteredRows.length} entries have a status</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
+                    💡 Add a <strong>Comment Status</strong> column to your sheet (values: Pending / Approved / Rejected / Live) to unlock approval-rate tracking here.
+                  </div>
+                )}
+
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                   <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                     <h2 className="font-semibold text-slate-800">VA Performance</h2>
@@ -322,6 +424,69 @@ export default function Dashboard() {
                 {vaStats.map(va => (
                   <VADailyBreakdown key={va.vaName} va={va} />
                 ))}
+              </div>
+            )}
+
+            {/* POST CHECK */}
+            {tab === "postcheck" && (
+              <div className="space-y-4 max-w-3xl">
+                <div className="bg-white rounded-xl border border-slate-200 p-5">
+                  <h2 className="font-semibold text-slate-800 mb-1">Check Before You Post</h2>
+                  <p className="text-sm text-slate-500 mb-4">
+                    Paste a Facebook post URL to see if anyone on the team has already commented on it.
+                  </p>
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="https://www.facebook.com/groups/.../posts/..."
+                    value={checkUrl}
+                    onChange={e => setCheckUrl(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-green-400"
+                  />
+
+                  {checkUrl.trim() && (
+                    <div className="mt-4">
+                      {urlMatches.length === 0 ? (
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+                          <span className="text-2xl">✅</span>
+                          <div>
+                            <p className="font-medium text-green-700">Safe to post</p>
+                            <p className="text-xs text-green-600">No previous comment found for this URL.</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                          <div className="flex items-center gap-3 mb-3">
+                            <span className="text-2xl">⚠️</span>
+                            <div>
+                              <p className="font-medium text-red-700">
+                                Already commented ({urlMatches.length} time{urlMatches.length > 1 ? "s" : ""})
+                              </p>
+                              <p className="text-xs text-red-600">Do not post again — check with the team first.</p>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            {urlMatches.map((m, i) => (
+                              <div key={i} className="bg-white rounded-lg px-3 py-2 text-xs flex flex-wrap gap-x-4 gap-y-1 border border-red-100">
+                                <span className="font-medium text-slate-700">{m.vaName}</span>
+                                <span className="text-slate-500">{m.date}</span>
+                                {m.row["Facility Name"] && <span className="text-slate-500">{m.row["Facility Name"]}</span>}
+                                {m.row["Facebook Group Name"] && <span className="text-slate-400">{m.row["Facebook Group Name"]}</span>}
+                                <StatusPill status={m.status} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-500">
+                  <strong>How it works:</strong> Matching ignores <code>http/https</code>, <code>www/m.</code> prefixes,
+                  query strings, and trailing slashes — so mobile and desktop links to the same post are caught.
+                  It searches <strong>all-time</strong> data regardless of the date filter above.
+                </div>
               </div>
             )}
 
@@ -443,6 +608,7 @@ function PerformanceTable({ stats, detailed }: { stats: VAStat[]; detailed?: boo
           <tr>
             <th className="px-5 py-3 text-left text-slate-500 font-medium">VA Name</th>
             <th className="px-4 py-3 text-right text-slate-500 font-medium">Comments</th>
+            <th className="px-4 py-3 text-right text-slate-500 font-medium">Approval</th>
             {detailed && <th className="px-4 py-3 text-left text-slate-500 font-medium">Dates Active</th>}
             <th className="px-5 py-3 text-left text-slate-500 font-medium w-48">Progress</th>
           </tr>
@@ -455,10 +621,20 @@ function PerformanceTable({ stats, detailed }: { stats: VAStat[]; detailed?: boo
                   return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
                 }).filter(Boolean))).sort()
               : [];
+            const appr = computeApproval(s.rows);
             return (
               <tr key={s.vaName} className="hover:bg-slate-50">
                 <td className="px-5 py-3 font-medium text-slate-800">{s.vaName}</td>
                 <td className="px-4 py-3 text-right font-semibold text-slate-800">{s.count}</td>
+                <td className="px-4 py-3 text-right text-slate-600">
+                  {appr.tracked > 0 ? (
+                    <span className={appr.rate >= 70 ? "text-green-600" : appr.rate >= 40 ? "text-amber-600" : "text-red-600"}>
+                      {appr.rate}%
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </td>
                 {detailed && (
                   <td className="px-4 py-3 text-xs text-slate-500">{dates.join(", ") || "—"}</td>
                 )}
@@ -535,6 +711,25 @@ function VADailyBreakdown({ va }: { va: VAStat }) {
         </table>
       </div>
     </div>
+  );
+}
+
+function StatusPill({ status }: { status: StatusBucket }) {
+  if (status === "none") return null;
+  const map: Record<string, string> = {
+    approved: "bg-green-100 text-green-700",
+    pending: "bg-amber-100 text-amber-700",
+    rejected: "bg-red-100 text-red-700",
+  };
+  const label: Record<string, string> = {
+    approved: "Approved/Live",
+    pending: "Pending",
+    rejected: "Rejected",
+  };
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${map[status]}`}>
+      {label[status]}
+    </span>
   );
 }
 
