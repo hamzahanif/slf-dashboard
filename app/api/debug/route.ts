@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { fetchSheet } from "@/lib/sheets";
 import { QA_TRACKER, VA_SHEETS } from "@/lib/config";
+import { getSessionUser } from "@/lib/auth-server";
 
 export async function GET() {
+  const user = await getSessionUser();
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
+
   const results: Record<string, unknown> = {};
 
   try {
