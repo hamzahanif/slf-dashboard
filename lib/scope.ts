@@ -10,3 +10,34 @@ export function scopeRowsToUser<T extends Row>(rows: T[], user: SessionPayload):
   const target = user.vaName.trim().toLowerCase();
   return rows.filter(r => (r["VA Name"] ?? "").trim().toLowerCase() === target);
 }
+
+// Merge QA tracker rows + VA sheet rows, removing exact duplicates.
+// Duplicate key: Date + VA Name + Direct Facebook Post URL (case-insensitive).
+// Rows without a URL fall back to Date + VA Name + Facility Name.
+export function mergeAndDeduplicate(qaRows: Row[], vaRows: Row[]): Row[] {
+  const key = (r: Row): string => {
+    const url = (r["Direct Facebook Post URL"] ?? "").trim().toLowerCase();
+    const suffix = url || (r["Facility Name"] ?? "").trim().toLowerCase();
+    return [
+      (r["Date"] ?? "").trim(),
+      (r["VA Name"] ?? "").trim().toLowerCase(),
+      suffix,
+    ].join("||");
+  };
+
+  const seen = new Set<string>();
+  const result: Row[] = [];
+
+  // VA sheet rows take precedence (they are the source of truth going forward)
+  for (const r of vaRows) {
+    const k = key(r);
+    if (!seen.has(k)) { seen.add(k); result.push(r); }
+  }
+  // Add QA tracker rows not already represented
+  for (const r of qaRows) {
+    const k = key(r);
+    if (!seen.has(k)) { seen.add(k); result.push(r); }
+  }
+
+  return result;
+}

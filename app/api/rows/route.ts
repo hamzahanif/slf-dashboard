@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { fetchSheet } from "@/lib/sheets";
 import { VA_SHEETS, QA_TRACKER } from "@/lib/config";
 import { getSessionUser } from "@/lib/auth-server";
-import { scopeRowsToUser } from "@/lib/scope";
+import { scopeRowsToUser, mergeAndDeduplicate } from "@/lib/scope";
 
 export async function GET() {
   try {
@@ -13,7 +13,7 @@ export async function GET() {
     const vaRowArrays = await Promise.all(
       VA_SHEETS.map(s => fetchSheet(s.spreadsheetId, s.gid).catch(() => []))
     );
-    const allRows = scopeRowsToUser(qaRows.length > 0 ? qaRows : vaRowArrays.flat(), user);
+    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRowArrays.flat()), user);
     return NextResponse.json({ rows: allRows });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

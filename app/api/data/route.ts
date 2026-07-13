@@ -3,7 +3,7 @@ import { fetchSheet } from "@/lib/sheets";
 import { VA_SHEETS, QA_TRACKER } from "@/lib/config";
 import { buildVAStats, detectGlitches, buildSummary } from "@/lib/analytics";
 import { getSessionUser } from "@/lib/auth-server";
-import { scopeRowsToUser } from "@/lib/scope";
+import { scopeRowsToUser, mergeAndDeduplicate } from "@/lib/scope";
 
 export async function GET() {
   try {
@@ -17,7 +17,7 @@ export async function GET() {
     );
     const vaRows = vaRowArrays.flat();
 
-    const allRows = scopeRowsToUser(qaRows.length > 0 ? qaRows : vaRows, user);
+    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRows), user);
 
     const vaStats = buildVAStats(allRows);
     const glitches = detectGlitches(allRows);
