@@ -301,7 +301,7 @@ function GlitchRow({ g, detail }: { g: Glitch; detail?: boolean }) {
         {GLITCH_LABELS[g.type] ?? g.type}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-slate-600 truncate">{g.message}</p>
+        <p className="text-xs text-slate-600 truncate">{g.detail}</p>
         {detail && (
           <div className="flex flex-wrap gap-3 mt-0.5">
             {g.row["VA Name"] && <span className="text-[10px] text-slate-400">{g.row["VA Name"]}</span>}
