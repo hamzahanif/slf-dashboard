@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Glitch, SummaryStats } from "@/lib/analytics";
 import type { SessionPayload } from "@/lib/session";
 import LogEntryForm from "./LogEntryForm";
+import EditRowModal from "./EditRowModal";
 
 type Tab = "overview" | "performance" | "postcheck" | "qa" | "data" | "logentry";
 type Preset = "today" | "yesterday" | "week" | "month" | "custom" | "alltime";
@@ -194,8 +195,10 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   const [search, setSearch] = useState("");
   const [checkUrl, setCheckUrl] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
+  const [editRow, setEditRow] = useState<Row | null>(null);
 
-  useEffect(() => {
+  function loadData() {
+    setLoading(true);
     Promise.all([
       fetch("/api/data").then(r => r.json()),
       fetch("/api/rows").then(r => r.json()),
@@ -203,6 +206,11 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
       .then(([d, r]) => { setData(d); setRows(r.rows || []); })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleLogout() {
@@ -571,32 +579,43 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                 </div>
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                   <div className="overflow-x-auto max-h-[600px]">
-                    {searchedRows.length > 0 ? (
-                      <table className="min-w-full text-xs">
-                        <thead className="bg-slate-50 sticky top-0 z-10">
-                          <tr>
-                            {Object.keys(searchedRows[0]).map(col => (
-                              <th key={col} className="px-3 py-2 text-left text-slate-500 font-medium whitespace-nowrap border-b border-slate-200">
-                                {col}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50">
-                          {searchedRows.map((row, i) => (
-                            <tr key={i} className="hover:bg-slate-50">
-                              {Object.values(row).map((val, j) => (
-                                <td key={j} className="px-3 py-2 text-slate-700 whitespace-nowrap max-w-[200px] truncate">
-                                  {String(val).startsWith("http") ? (
-                                    <a href={val} target="_blank" rel="noreferrer" className="text-green-600 hover:underline">{val}</a>
-                                  ) : val}
-                                </td>
+                    {searchedRows.length > 0 ? (() => {
+                      const visibleCols = Object.keys(searchedRows[0]).filter(k => !k.startsWith("_"));
+                      return (
+                        <table className="min-w-full text-xs">
+                          <thead className="bg-slate-50 sticky top-0 z-10">
+                            <tr>
+                              <th className="px-3 py-2 border-b border-slate-200 w-16" />
+                              {visibleCols.map(col => (
+                                <th key={col} className="px-3 py-2 text-left text-slate-500 font-medium whitespace-nowrap border-b border-slate-200">
+                                  {col}
+                                </th>
                               ))}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {searchedRows.map((row, i) => (
+                              <tr key={i} className="hover:bg-slate-50 group">
+                                <td className="px-3 py-2">
+                                  <button
+                                    onClick={() => setEditRow(row)}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity bg-green-50 hover:bg-green-100 text-green-700 text-[10px] font-medium px-2 py-1 rounded-md border border-green-200">
+                                    Edit
+                                  </button>
+                                </td>
+                                {visibleCols.map(col => (
+                                  <td key={col} className="px-3 py-2 text-slate-700 whitespace-nowrap max-w-[200px] truncate">
+                                    {String(row[col] ?? "").startsWith("http") ? (
+                                      <a href={row[col]} target="_blank" rel="noreferrer" className="text-green-600 hover:underline">{row[col]}</a>
+                                    ) : (row[col] ?? "")}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      );
+                    })() : (
                       <div className="p-8 text-center text-slate-400 text-sm">No rows for {dateLabel}</div>
                     )}
                   </div>
@@ -606,6 +625,14 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
           </>
         )}
       </main>
+
+      {editRow && (
+        <EditRowModal
+          row={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={() => { setEditRow(null); loadData(); }}
+        />
+      )}
     </div>
   );
 }

@@ -17,7 +17,8 @@ export async function GET() {
     );
     const vaRows = vaRowArrays.flat();
 
-    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRows), user);
+    const vaSheetGids = VA_SHEETS.map(s => ({ gid: s.gid, vaName: s.vaName }));
+    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRows, vaSheetGids, QA_TRACKER.gid), user);
 
     const vaStats = buildVAStats(allRows);
     const glitches = detectGlitches(allRows);

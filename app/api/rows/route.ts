@@ -13,7 +13,8 @@ export async function GET() {
     const vaRowArrays = await Promise.all(
       VA_SHEETS.map(s => fetchSheet(s.spreadsheetId, s.gid).catch(() => []))
     );
-    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRowArrays.flat()), user);
+    const vaSheetGids = VA_SHEETS.map(s => ({ gid: s.gid, vaName: s.vaName }));
+    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRowArrays.flat(), vaSheetGids, QA_TRACKER.gid), user);
     return NextResponse.json({ rows: allRows });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
