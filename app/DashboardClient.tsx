@@ -4,8 +4,9 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import type { Glitch, SummaryStats } from "@/lib/analytics";
 import type { SessionPayload } from "@/lib/session";
+import LogEntryForm from "./LogEntryForm";
 
-type Tab = "overview" | "performance" | "postcheck" | "qa" | "data";
+type Tab = "overview" | "performance" | "postcheck" | "qa" | "data" | "logentry";
 type Preset = "today" | "yesterday" | "week" | "month" | "custom" | "alltime";
 
 interface DashData {
@@ -258,6 +259,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
     { id: "postcheck", label: "Post Check" },
     { id: "qa", label: "QA & Glitches" },
     { id: "data", label: "Raw Data" },
+    { id: "logentry", label: "Log Entry" },
   ];
 
   const presets: { id: Preset; label: string }[] = [
@@ -310,8 +312,8 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
         </div>
       </header>
 
-      {/* Date filter bar */}
-      <div className="bg-white border-b border-slate-200">
+      {/* Date filter bar — hidden on Log Entry tab */}
+      <div className={`bg-white border-b border-slate-200 ${tab === "logentry" ? "hidden" : ""}`}>
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-2">
           <span className="text-xs text-slate-500 font-medium mr-1">Date:</span>
           {presets.map(p => (
@@ -374,7 +376,10 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
           </div>
         )}
 
-        {!loading && !error && (
+        {/* LOG ENTRY renders immediately — no data dependency */}
+        {tab === "logentry" && <LogEntryForm user={user} />}
+
+        {!loading && !error && tab !== "logentry" && (
           <>
             {/* OVERVIEW */}
             {tab === "overview" && (
