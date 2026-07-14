@@ -361,6 +361,47 @@ function VADailyBreakdown({ va }: { va: VAStat }) {
   );
 }
 
+// ── Fix filters button ────────────────────────────────────────────────────────
+function FixFiltersButton() {
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [msg, setMsg] = useState("");
+  async function run() {
+    setState("loading");
+    try {
+      const res = await fetch("/api/fix-filters", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        setState("done");
+        setMsg(`Fixed ${data.fixed.length} sheets`);
+        setTimeout(() => setState("idle"), 4000);
+      } else {
+        setState("error");
+        setMsg(data.error ?? "Failed");
+        setTimeout(() => setState("idle"), 5000);
+      }
+    } catch (e) {
+      setState("error");
+      setMsg(String(e));
+      setTimeout(() => setState("idle"), 5000);
+    }
+  }
+  return (
+    <div className="mb-1">
+      <button onClick={run} disabled={state === "loading"}
+        className={`w-full flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50
+          ${state === "done" ? "text-green-400 bg-green-900/30" : state === "error" ? "text-red-400 bg-red-900/20" : "text-slate-500 hover:text-slate-300 hover:bg-slate-800"}`}>
+        {state === "loading"
+          ? <><div className="w-3 h-3 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0"/> Fixing filters…</>
+          : state === "done"
+          ? <><Ic n="check" cls="w-3 h-3 flex-shrink-0"/> {msg}</>
+          : state === "error"
+          ? <><Ic n="alert" cls="w-3 h-3 flex-shrink-0"/> {msg}</>
+          : <><Ic n="table" cls="w-3 h-3 flex-shrink-0"/> Fix sheet filters</>}
+      </button>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DashboardClient({ user }: { user: SessionPayload }) {
   const router = useRouter();
@@ -495,8 +536,11 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
               <p className="text-slate-500 text-[10px]">{user.title}</p>
             </div>
           </div>
+          {user.role === "admin" && (
+            <FixFiltersButton/>
+          )}
           <button onClick={handleLogout} disabled={loggingOut}
-            className="flex items-center gap-2 text-slate-500 hover:text-red-400 text-xs transition-colors disabled:opacity-50 w-full">
+            className="flex items-center gap-2 text-slate-500 hover:text-red-400 text-xs transition-colors disabled:opacity-50 w-full mt-2">
             <Ic n="logout" cls="w-3.5 h-3.5"/>{loggingOut ? "Signing out…" : "Sign out"}
           </button>
         </div>
