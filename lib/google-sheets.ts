@@ -107,3 +107,95 @@ export async function appendRowToSheet(
     requestBody: { values: [values] },
   });
 }
+
+// ── QA Review sheet helpers ──────────────────────────────────────────────────
+
+const QA_HEADERS = [
+  "Row Key", "VA Name", "Date", "FB Post URL", "Facility Name",
+  "QA Status", "QA Notes", "Reviewed By", "Review Date",
+];
+
+async function getOrCreateSheetByName(spreadsheetId: string, sheetName: string): Promise<void> {
+  const auth = getAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
+  const existing = meta.data.sheets?.find(s => s.properties?.title === sheetName);
+  if (existing) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests: [{ addSheet: { properties: { title: sheetName } } }] },
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${sheetName}'!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [QA_HEADERS] },
+  });
+}
+
+export async function upsertQARow(
+  spreadsheetId: string,
+  sheetName: string,
+  rowKey: string,
+  data: Record<string, string>
+): Promise<void> {
+  await getOrCreateSheetByName(spreadsheetId, sheetName);
+  const auth = getAuth();
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${sheetName}'!A:A`,
+  });
+  const rows = res.data.values ?? [];
+  let targetRowNum = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === rowKey) { targetRowNum = i + 1; break; }
+  }
+
+  const values = QA_HEADERS.map(h => (h === "Row Key" ? rowKey : (data[h] ?? "")));
+
+  if (targetRowNum > 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${sheetName}'!A${targetRowNum}:${columnToLetter(QA_HEADERS.length)}${targetRowNum}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [values] },
+    });
+  } else {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `'${sheetName}'!A1`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [values] },
+    });
+  }
+}
+
+export async function fetchQAReviews(
+  spreadsheetId: string,
+  sheetName: string
+): Promise<Record<string, Record<string, string>>> {
+  try {
+    await getOrCreateSheetByName(spreadsheetId, sheetName);
+    const auth = getAuth();
+    const sheets = google.sheets({ version: "v4", auth });
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${sheetName}'!A:${columnToLetter(QA_HEADERS.length)}`,
+    });
+    const all = res.data.values ?? [];
+    if (all.length < 2) return {};
+    const headers = all[0].map(h => String(h));
+    const result: Record<string, Record<string, string>> = {};
+    for (let i = 1; i < all.length; i++) {
+      const obj: Record<string, string> = {};
+      headers.forEach((h, ci) => { obj[h] = String(all[i][ci] ?? ""); });
+      if (obj["Row Key"]) result[obj["Row Key"]] = obj;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}

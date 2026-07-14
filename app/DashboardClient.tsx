@@ -7,7 +7,7 @@ import type { SessionPayload } from "@/lib/session";
 import LogEntryForm from "./LogEntryForm";
 import EditRowModal from "./EditRowModal";
 
-type Tab = "overview" | "performance" | "postcheck" | "qa" | "data" | "logentry";
+type Tab = "overview" | "performance" | "postcheck" | "qa" | "data" | "logentry" | "qareview";
 type Preset = "today" | "yesterday" | "week" | "month" | "alltime" | "custom";
 interface DashData { summary: SummaryStats; glitches: Glitch[]; }
 interface Row { [key: string]: string; }
@@ -69,6 +69,7 @@ function buildStats(rows: Row[]): VAStat[] {
   for (const r of rows) { const n = r["VA Name"]?.trim() || "Unknown"; if (!m.has(n)) m.set(n, []); m.get(n)!.push(r); }
   return Array.from(m.entries()).map(([vaName, r]) => ({ vaName, count: r.length, rows: r })).sort((a, b) => b.count - a.count);
 }
+type QAStatus = "Pass" | "Fail" | "Duplicate" | "Pending" | "";
 type Bucket = "approved" | "pending" | "rejected" | "none";
 function getBucket(r: Row): Bucket {
   const v = (r["Comment Status"] ?? "").toLowerCase();
@@ -87,6 +88,18 @@ function computeApproval(rows: Row[]) {
 function normUrl(u: string) {
   return u.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^(www\.|m\.|web\.)/, "").replace(/\?.*$/, "").replace(/\/$/, "");
 }
+function rowKey(r: Row): string {
+  const url = (r["Direct Facebook Post URL"] ?? "").trim().toLowerCase();
+  return [(r["Date"] ?? "").trim(), (r["VA Name"] ?? "").trim().toLowerCase(), url || (r["Facility Name"] ?? "").trim().toLowerCase()].join("||");
+}
+function exportCSV(rows: Row[], filename: string) {
+  if (!rows.length) return;
+  const cols = Object.keys(rows[0]).filter(k => !k.startsWith("_"));
+  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const csv = [cols.map(escape).join(","), ...rows.map(r => cols.map(c => escape(r[c] ?? "")).join(","))].join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = filename; a.click();
+}
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 function Ic({ n, cls = "w-4 h-4" }: { n: string; cls?: string }) {
@@ -102,6 +115,8 @@ function Ic({ n, cls = "w-4 h-4" }: { n: string; cls?: string }) {
     logout: <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
     check: <><polyline points="20 6 9 17 4 12"/></>,
     link: <><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></>,
+    shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
+    download: <><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
   };
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cls}>{P[n]}</svg>;
 }
@@ -364,6 +379,17 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   const [checkUrl, setCheckUrl] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [editRow, setEditRow] = useState<Row | null>(null);
+  const [qaReviews, setQAReviews] = useState<Record<string, Record<string, string>>>({});
+  const [qaLoading, setQALoading] = useState(false);
+  const [qaFilter, setQAFilter] = useState<QAStatus | "all">("all");
+  const [qaVAFilter, setQAVAFilter] = useState("all");
+  const [qaSaving, setQASaving] = useState<string | null>(null);
+  const [qaSearch, setQASearch] = useState("");
+
+  function loadQAReviews() {
+    setQALoading(true);
+    fetch("/api/qa-review").then(r => r.json()).then(d => setQAReviews(d.reviews ?? {})).finally(() => setQALoading(false));
+  }
 
   function loadData() {
     setLoading(true);
@@ -405,7 +431,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   }, [data, glitchFilter, dateRange]);
   const dateLabel = fmtRange(dateRange, preset);
 
-  function navTo(t: Tab) { setTab(t); setSidebarOpen(false); }
+  function navTo(t: Tab) { setTab(t); setSidebarOpen(false); if (t === "qareview") loadQAReviews(); }
   function handlePreset(p: Preset) { setPreset(p); setShowCustom(p === "custom"); }
 
   const NAV = [
@@ -414,11 +440,13 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
     { id: "postcheck" as Tab, label: "Post Check", icon: "search" },
     { id: "qa" as Tab, label: "QA & Glitches", icon: "alert", badge: filteredGlitches.length || undefined },
     { id: "data" as Tab, label: "Records", icon: "table" },
+    ...(user.role === "admin" ? [{ id: "qareview" as Tab, label: "QA Review", icon: "shield" }] : []),
     { id: "logentry" as Tab, label: "Log Entry", icon: "plus" },
   ];
   const TAB_TITLE: Record<Tab, string> = {
     overview: "Dashboard Overview", performance: "VA Performance",
-    postcheck: "Post Check", qa: "QA & Glitches", data: "Records", logentry: "Log Entry",
+    postcheck: "Post Check", qa: "QA & Glitches", data: "Records",
+    qareview: "QA Review", logentry: "Log Entry",
   };
   const PRESETS: { id: Preset; label: string }[] = [
     { id: "today", label: "Today" }, { id: "yesterday", label: "Yesterday" },
@@ -704,13 +732,17 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
               {/* ── RECORDS ── */}
               {tab === "data" && (
                 <div className="space-y-4">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <div className="relative">
                       <Ic n="search" cls="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
                       <input type="text" placeholder="Search records…" value={search} onChange={e => setSearch(e.target.value)}
                         className="bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm w-72 focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"/>
                     </div>
                     <span className="text-xs text-slate-400">{searchedRows.length.toLocaleString()} records · {dateLabel}</span>
+                    <button onClick={() => exportCSV(searchedRows, `slf-records-${new Date().toISOString().slice(0,10)}.csv`)}
+                      className="ml-auto flex items-center gap-1.5 bg-white border border-slate-200 hover:border-green-400 hover:text-green-700 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl transition-colors">
+                      <Ic n="download" cls="w-3.5 h-3.5"/> Export CSV
+                    </button>
                   </div>
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="overflow-x-auto max-h-[640px]">
@@ -763,6 +795,168 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                   </div>
                 </div>
               )}
+
+              {/* ── QA REVIEW (admin only) ── */}
+              {tab === "qareview" && user.role === "admin" && (() => {
+                const qaStatusColors: Record<string, string> = {
+                  Pass: "bg-green-100 text-green-700 border-green-200",
+                  Fail: "bg-red-100 text-red-700 border-red-200",
+                  Duplicate: "bg-purple-100 text-purple-700 border-purple-200",
+                  Pending: "bg-amber-100 text-amber-700 border-amber-200",
+                };
+                const allVAs = Array.from(new Set(filteredRows.map(r => r["VA Name"]?.trim()).filter(Boolean)));
+                const qaRows = filteredRows.filter(r => {
+                  if (qaVAFilter !== "all" && r["VA Name"]?.trim() !== qaVAFilter) return false;
+                  const k = rowKey(r);
+                  const status = (qaReviews[k]?.["QA Status"] ?? "") as QAStatus;
+                  if (qaFilter !== "all" && (qaFilter === "Pending" ? (status !== "" && status !== "Pending") : status !== qaFilter)) return false;
+                  if (qaFilter === "Pending" && status !== "" && status !== "Pending") return false;
+                  if (qaSearch.trim()) {
+                    const q = qaSearch.toLowerCase();
+                    if (!Object.values(r).some(v => v.toLowerCase().includes(q))) return false;
+                  }
+                  return true;
+                }).filter(r => {
+                  if (qaFilter === "Pending") {
+                    const k = rowKey(r);
+                    const st = qaReviews[k]?.["QA Status"] ?? "";
+                    return st === "" || st === "Pending";
+                  }
+                  return true;
+                });
+
+                const counts = { Pass: 0, Fail: 0, Duplicate: 0, Pending: 0 };
+                for (const r of filteredRows) {
+                  const st = (qaReviews[rowKey(r)]?.["QA Status"] ?? "") as QAStatus;
+                  if (st === "Pass") counts.Pass++;
+                  else if (st === "Fail") counts.Fail++;
+                  else if (st === "Duplicate") counts.Duplicate++;
+                  else counts.Pending++;
+                }
+
+                async function saveQA(r: Row, status: QAStatus, notes = "") {
+                  const k = rowKey(r);
+                  setQASaving(k);
+                  const d = parseRowDate(r["Date"]);
+                  const dateStr = d ? d.toLocaleDateString("en-US") : r["Date"];
+                  try {
+                    const res = await fetch("/api/qa-review", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        rowKey: k, vaName: r["VA Name"] ?? "", date: dateStr,
+                        url: r["Direct Facebook Post URL"] || undefined,
+                        facilityName: r["Facility Name"] || undefined,
+                        status, notes,
+                      }),
+                    });
+                    if (res.ok) setQAReviews(prev => ({ ...prev, [k]: { ...prev[k], "QA Status": status, "QA Notes": notes, "Row Key": k } }));
+                  } finally { setQASaving(null); }
+                }
+
+                return (
+                  <div className="space-y-4">
+                    {/* Stats bar */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {(["Pending", "Pass", "Fail", "Duplicate"] as const).map(s => (
+                        <button key={s} onClick={() => setQAFilter(qaFilter === s ? "all" : s)}
+                          className={`rounded-2xl border p-4 text-left transition-all hover:shadow-md ${qaFilter === s ? qaStatusColors[s] + " shadow-sm" : "bg-white border-slate-200"}`}>
+                          <div className={`text-2xl font-black tabular-nums ${qaFilter === s ? "" : s === "Pass" ? "text-green-600" : s === "Fail" ? "text-red-500" : s === "Duplicate" ? "text-purple-600" : "text-amber-500"}`}>
+                            {counts[s].toLocaleString()}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">{s === "Pending" ? "Unreviewed" : s}</div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Filters */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative">
+                        <Ic n="search" cls="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                        <input type="text" placeholder="Search entries…" value={qaSearch} onChange={e => setQASearch(e.target.value)}
+                          className="bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm w-56 focus:outline-none focus:border-green-400"/>
+                      </div>
+                      <select value={qaVAFilter} onChange={e => setQAVAFilter(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400">
+                        <option value="all">All VAs</option>
+                        {allVAs.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                      <button onClick={() => exportCSV(qaRows, `slf-qa-${new Date().toISOString().slice(0,10)}.csv`)}
+                        className="ml-auto flex items-center gap-1.5 bg-white border border-slate-200 hover:border-green-400 hover:text-green-700 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl transition-colors">
+                        <Ic n="download" cls="w-3.5 h-3.5"/> Export CSV
+                      </button>
+                    </div>
+
+                    {/* Table */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      {qaLoading ? (
+                        <div className="py-16 flex items-center justify-center gap-3">
+                          <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"/>
+                          <span className="text-sm text-slate-400">Loading reviews…</span>
+                        </div>
+                      ) : qaRows.length === 0 ? (
+                        <div className="py-20 flex flex-col items-center gap-3 text-slate-300">
+                          <Ic n="shield" cls="w-10 h-10"/>
+                          <p className="text-sm">No entries match the current filter</p>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto max-h-[600px]">
+                          <table className="min-w-full text-xs">
+                            <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">VA</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Facility / Group</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Comment Status</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider w-60">QA Decision</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Notes</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Reviewed By</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {qaRows.map((r, i) => {
+                                const k = rowKey(r);
+                                const review = qaReviews[k];
+                                const status = (review?.["QA Status"] ?? "") as QAStatus;
+                                const saving = qaSaving === k;
+                                const d = parseRowDate(r["Date"]);
+                                const dateStr = d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : r["Date"];
+                                return (
+                                  <tr key={i} className="hover:bg-slate-50/80 group">
+                                    <td className="px-4 py-3">
+                                      <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                                        <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: vaColor(r["VA Name"] ?? "") }}/>
+                                        {r["VA Name"] ?? "—"}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{dateStr}</td>
+                                    <td className="px-4 py-3 text-slate-600 max-w-[160px] truncate">{r["Facility Name"] || r["Facebook Group Name"] || "—"}</td>
+                                    <td className="px-4 py-3">
+                                      <SPill s={getBucket(r)}/>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <div className="flex items-center gap-1">
+                                        {(["Pass", "Fail", "Duplicate"] as const).map(s => (
+                                          <button key={s} disabled={saving} onClick={() => saveQA(r, status === s ? "Pending" : s)}
+                                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all disabled:opacity-40 ${status === s ? qaStatusColors[s] : "bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300"}`}>
+                                            {saving && status === s ? "…" : s}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-400 max-w-[140px] truncate" title={review?.["QA Notes"]}>{review?.["QA Notes"] || "—"}</td>
+                                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{review?.["Reviewed By"] || "—"}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
             </div>
           )}

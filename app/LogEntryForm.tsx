@@ -45,10 +45,30 @@ export default function LogEntryForm({ user }: Props) {
 
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok?: boolean; error?: string } | null>(null);
+  const [dupWarning, setDupWarning] = useState<string | null>(null);
+  const [confirmedDup, setConfirmedDup] = useState(false);
 
   function set(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }));
     setResult(null);
+    if (field === "Direct Facebook Post URL") { setDupWarning(null); setConfirmedDup(false); }
+  }
+
+  async function checkDuplicate(url: string) {
+    if (!url.trim()) return;
+    try {
+      const res = await fetch("/api/rows");
+      const data = await res.json();
+      const rows: { [k: string]: string }[] = data.rows ?? [];
+      const norm = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^(www\.|m\.|web\.)/, "").replace(/\?.*$/, "").replace(/\/$/, "");
+      const matches = rows.filter(r => r["Direct Facebook Post URL"] && norm(r["Direct Facebook Post URL"]) === norm(url));
+      if (matches.length > 0) {
+        const names = [...new Set(matches.map(r => r["VA Name"]?.trim()).filter(Boolean))].join(", ");
+        setDupWarning(`⚠️ This URL was already submitted ${matches.length}× by: ${names}. Check before submitting.`);
+      } else {
+        setDupWarning(null);
+      }
+    } catch { /* silent */ }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -57,6 +77,7 @@ export default function LogEntryForm({ user }: Props) {
     if (!form["Facebook Group Name"]) { setResult({ error: "Facebook Group Name is required." }); return; }
     if (!form["Direct Facebook Post URL"]) { setResult({ error: "Direct Facebook Post URL is required." }); return; }
 
+    if (dupWarning && !confirmedDup) { setResult({ error: "This URL already exists. Click 'Submit anyway' to confirm." }); return; }
     setSubmitting(true);
     setResult(null);
     try {
@@ -187,9 +208,19 @@ export default function LogEntryForm({ user }: Props) {
                 <label className="block text-xs font-medium text-slate-600 mb-1">Direct Facebook Post URL <span className="text-red-400">*</span></label>
                 <input type="url" value={form["Direct Facebook Post URL"]}
                   onChange={e => set("Direct Facebook Post URL", e.target.value)}
+                  onBlur={e => checkDuplicate(e.target.value)}
                   placeholder="https://www.facebook.com/groups/..."
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400"
+                  className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400 ${dupWarning ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}
                 />
+                {dupWarning && (
+                  <div className="mt-1.5 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <span className="text-amber-600 text-xs leading-relaxed flex-1">{dupWarning}</span>
+                    <button type="button" onClick={() => { setDupWarning(null); setConfirmedDup(true); }}
+                      className="text-[10px] font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded whitespace-nowrap">
+                      Submit anyway
+                    </button>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Facility Name</label>

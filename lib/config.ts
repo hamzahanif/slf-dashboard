@@ -21,3 +21,8 @@ export const QA_TRACKER: SheetConfig = {
   gid: "471911800",
   vaName: "QA Tracker",
 };
+
+export const QA_REVIEW_SHEET = {
+  spreadsheetId: SPREADSHEET_ID,
+  sheetName: "QA Review",
+};
