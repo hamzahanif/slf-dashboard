@@ -48,7 +48,12 @@ function getRange(p: Preset, cs: string, ce: string): [Date, Date] | null {
   if (p === "yesterday") { const y = new Date(t); y.setDate(y.getDate() - 1); return [y, y]; }
   if (p === "week") return [startOfWeek(t), t];
   if (p === "month") return [new Date(t.getFullYear(), t.getMonth(), 1), t];
-  if (p === "custom" && cs && ce) return [new Date(cs), new Date(ce)];
+  if (p === "custom") {
+    if (!cs && !ce) return null;
+    const s = cs ? new Date(cs) : new Date(0);
+    const e = ce ? new Date(ce) : new Date();
+    return [s, e];
+  }
   return null;
 }
 function filterByRange(rows: Row[], r: [Date, Date] | null) {
@@ -603,19 +608,17 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                   </div>
 
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    {approval.tracked > 0 ? (
-                      <>
-                        <div className="mb-4"><h2 className="font-bold text-slate-800">Comment Approval</h2><p className="text-xs text-slate-400 mt-0.5">Status breakdown</p></div>
-                        <DonutChart approved={approval.approved} pending={approval.pending} rejected={approval.rejected} total={filteredRows.length}/>
-                      </>
-                    ) : (
-                      <>
-                        <div className="mb-4"><h2 className="font-bold text-slate-800">VA Comparison</h2><p className="text-xs text-slate-400 mt-0.5">Entries by team member</p></div>
-                        {vaStats.length > 0 ? <VABarChart stats={vaStats}/> : <div className="text-slate-300 text-sm text-center py-8">No data</div>}
-                      </>
-                    )}
+                    <div className="mb-4"><h2 className="font-bold text-slate-800">VA Comparison</h2><p className="text-xs text-slate-400 mt-0.5">Entries by team member</p></div>
+                    {vaStats.length > 0 ? <VABarChart stats={vaStats}/> : <div className="text-slate-300 text-sm text-center py-8">No data</div>}
                   </div>
                 </div>
+
+                {approval.tracked > 0 && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                    <div className="mb-4"><h2 className="font-bold text-slate-800">Comment Approval</h2><p className="text-xs text-slate-400 mt-0.5">Status breakdown · {dateLabel}</p></div>
+                    <DonutChart approved={approval.approved} pending={approval.pending} rejected={approval.rejected} total={filteredRows.length}/>
+                  </div>
+                )}
 
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
