@@ -9,10 +9,9 @@ export async function GET() {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-    const data = await fetchAllEntries({
-      excludeQATracker: true,
-      vaName: user.role === "va" && user.vaName ? user.vaName : undefined,
-    });
+    const data = await fetchAllEntries(
+      user.role === "va" && user.vaName ? user.vaName : undefined
+    );
 
     const rows = data.map(dbToRow);
     const vaStats = buildVAStats(rows);
