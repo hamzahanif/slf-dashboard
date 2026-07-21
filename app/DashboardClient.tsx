@@ -64,10 +64,16 @@ function fmtRange(r: [Date, Date] | null, p: Preset) {
   if (s.toDateString() === e.toDateString()) return s.toLocaleDateString("en-US", o);
   return `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", o)}`;
 }
+function toTitleCase(s: string) { return s.replace(/\b\w/g, c => c.toUpperCase()); }
 function buildStats(rows: Row[]): VAStat[] {
-  const m = new Map<string, Row[]>();
-  for (const r of rows) { const n = r["VA Name"]?.trim() || "Unknown"; if (!m.has(n)) m.set(n, []); m.get(n)!.push(r); }
-  return Array.from(m.entries()).map(([vaName, r]) => ({ vaName, count: r.length, rows: r })).sort((a, b) => b.count - a.count);
+  const m = new Map<string, { display: string; rows: Row[] }>();
+  for (const r of rows) {
+    const raw = r["VA Name"]?.trim() || "Unknown";
+    const key = raw.toLowerCase();
+    if (!m.has(key)) m.set(key, { display: toTitleCase(raw), rows: [] });
+    m.get(key)!.rows.push(r);
+  }
+  return Array.from(m.values()).map(({ display, rows: r }) => ({ vaName: display, count: r.length, rows: r })).sort((a, b) => b.count - a.count);
 }
 type QAStatus = "Pass" | "Fail" | "Duplicate" | "Pending" | "";
 type Bucket = "approved" | "pending" | "rejected" | "none";

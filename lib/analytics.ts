@@ -41,13 +41,16 @@ export interface VAStat {
   alltime: number;
 }
 
+function toTitleCase(s: string) { return s.replace(/\b\w/g, c => c.toUpperCase()); }
+
 export function buildVAStats(rows: Row[], dateCol = "Date", nameCol = "VA Name"): VAStat[] {
   const map = new Map<string, VAStat>();
 
   for (const row of rows) {
-    const name = row[nameCol]?.trim() || "Unknown";
-    if (!map.has(name)) map.set(name, { vaName: name, daily: 0, weekly: 0, monthly: 0, alltime: 0 });
-    const stat = map.get(name)!;
+    const raw = row[nameCol]?.trim() || "Unknown";
+    const key = raw.toLowerCase();
+    if (!map.has(key)) map.set(key, { vaName: toTitleCase(raw), daily: 0, weekly: 0, monthly: 0, alltime: 0 });
+    const stat = map.get(key)!;
     stat.alltime++;
     if (inPeriod(row, dateCol, "monthly")) stat.monthly++;
     if (inPeriod(row, dateCol, "weekly")) stat.weekly++;
