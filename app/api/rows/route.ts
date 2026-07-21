@@ -11,6 +11,7 @@ export async function GET() {
     let query = supabase
       .from("entries")
       .select("*")
+      .neq("source_sheet", "QA Tracker")
       .order("date", { ascending: false })
       .range(0, 14999);
 
