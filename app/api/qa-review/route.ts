@@ -1,13 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-server";
-import { upsertQARow, fetchQAReviews } from "@/lib/google-sheets";
-import { QA_REVIEW_SHEET } from "@/lib/config";
+import { supabase } from "@/lib/supabase";
 
 export async function GET() {
   try {
     const user = await getSessionUser();
     if (!user || user.role !== "admin") return NextResponse.json({ error: "Not authorized" }, { status: 403 });
-    const reviews = await fetchQAReviews(QA_REVIEW_SHEET.spreadsheetId, QA_REVIEW_SHEET.sheetName);
+
+    const { data, error } = await supabase
+      .from("qa_reviews")
+      .select("*")
+      .order("review_date", { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    // Return as Record<rowKey, review> for easy lookup in the dashboard
+    const reviews: Record<string, Record<string, string>> = {};
+    for (const r of data ?? []) {
+      reviews[r.row_key] = {
+        "Row Key": r.row_key,
+        "VA Name": r.va_name ?? "",
+        "Date": r.date ?? "",
+        "FB Post URL": r.fb_post_url ?? "",
+        "Facility Name": r.facility_name ?? "",
+        "QA Status": r.qa_status ?? "",
+        "QA Notes": r.qa_notes ?? "",
+        "Reviewed By": r.reviewed_by ?? "",
+        "Review Date": r.review_date ?? "",
+      };
+    }
+
     return NextResponse.json({ reviews });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -29,21 +51,23 @@ export async function POST(req: NextRequest) {
       notes?: string;
     };
 
-    await upsertQARow(
-      QA_REVIEW_SHEET.spreadsheetId,
-      QA_REVIEW_SHEET.sheetName,
-      body.rowKey,
-      {
-        "VA Name": body.vaName,
-        "Date": body.date,
-        "FB Post URL": body.url ?? "",
-        "Facility Name": body.facilityName ?? "",
-        "QA Status": body.status,
-        "QA Notes": body.notes ?? "",
-        "Reviewed By": user.name,
-        "Review Date": new Date().toLocaleDateString("en-US"),
-      }
-    );
+    const today = new Date().toISOString().slice(0, 10);
+
+    const { error } = await supabase
+      .from("qa_reviews")
+      .upsert({
+        row_key: body.rowKey,
+        va_name: body.vaName,
+        date: body.date || null,
+        fb_post_url: body.url ?? null,
+        facility_name: body.facilityName ?? null,
+        qa_status: body.status,
+        qa_notes: body.notes ?? null,
+        reviewed_by: user.name,
+        review_date: today,
+      }, { onConflict: "row_key" });
+
+    if (error) throw new Error(error.message);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

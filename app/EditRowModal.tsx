@@ -19,7 +19,7 @@ const SELECT_FIELDS: Record<string, string[]> = {
 };
 const TEXTAREA_FIELDS = ["Promo Comment", "Status / Notes", "Handoff Notes"];
 const READONLY_FIELDS = ["VA Name", "Date"];
-const HIDDEN_FIELDS = ["_sourceGid"];
+const HIDDEN_FIELDS = ["_id", "_sourceSheet"];
 
 interface Row {
   [key: string]: string;
@@ -57,10 +57,8 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sourceGid: row._sourceGid,
+          id: row._id,
           vaName: row["VA Name"],
-          url: row["Direct Facebook Post URL"] || undefined,
-          facilityName: row["Facility Name"] || undefined,
           updates: form,
         }),
       });

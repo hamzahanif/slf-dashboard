@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-server";
-import { VA_SHEETS } from "@/lib/config";
-import { appendRowToSheet } from "@/lib/google-sheets";
+import { supabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,19 +23,29 @@ export async function POST(req: NextRequest) {
       targetVaName = user.vaName;
     }
 
-    const sheet = VA_SHEETS.find(
-      s => s.vaName.trim().toLowerCase() === targetVaName.trim().toLowerCase()
-    );
-    if (!sheet) {
-      return NextResponse.json({ error: `No sheet configured for VA: ${targetVaName}` }, { status: 400 });
-    }
-
-    const rowData: Record<string, string> = {
-      ...fields,
-      "VA Name": sheet.vaName,
+    const entry = {
+      date: fields["Date"] || null,
+      va_name: targetVaName,
+      shift: fields["Shift"] || null,
+      facebook_group_name: fields["Facebook Group Name"] || null,
+      direct_facebook_post_url: fields["Direct Facebook Post URL"] || null,
+      facility_name: fields["Facility Name"] || null,
+      slf_listing_id: fields["SLF Listing ID"] || null,
+      media_uploaded: fields["Media Uploaded"] || null,
+      comment_left_script_a: fields["Comment Left (Script A)"] || null,
+      comment_status: fields["Comment Status"] || null,
+      action_type: fields["Action Type"] || null,
+      promo_comment: fields["Promo Comment (Script B or C)"] || fields["Promo Comment"] || null,
+      wp_post_time: fields["WP- Post time"] || fields["WP Post Time"] || null,
+      fb_account: fields["FB Account"] || null,
+      handoff_notes: fields["Handoff Notes"] || null,
+      status_notes: fields["Status / Notes"] || null,
+      source_sheet: targetVaName,
     };
 
-    await appendRowToSheet(sheet.spreadsheetId, sheet.gid, rowData);
+    const { error } = await supabase.from("entries").insert(entry);
+    if (error) throw new Error(error.message);
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[submit]", err);

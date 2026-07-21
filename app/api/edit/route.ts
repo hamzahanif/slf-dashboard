@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-server";
-import { VA_SHEETS, QA_TRACKER } from "@/lib/config";
-import { findAndUpdateRow } from "@/lib/google-sheets";
+import { supabase } from "@/lib/supabase";
+import { rowFieldsToDb } from "@/lib/supabase-rows";
 
 export async function PATCH(req: NextRequest) {
   try {
@@ -9,17 +9,15 @@ export async function PATCH(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
     const body = await req.json() as {
-      sourceGid: string;
+      id: string;
       vaName: string;
-      url?: string;
-      facilityName?: string;
       updates: Record<string, string>;
     };
 
-    const { sourceGid, vaName, url, facilityName, updates } = body;
+    const { id, vaName, updates } = body;
 
-    if (!sourceGid || !vaName) {
-      return NextResponse.json({ error: "sourceGid and vaName are required" }, { status: 400 });
+    if (!id || !vaName) {
+      return NextResponse.json({ error: "id and vaName are required" }, { status: 400 });
     }
 
     // VAs may only edit their own rows
@@ -27,21 +25,17 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Not authorized to edit another VA's rows" }, { status: 403 });
     }
 
-    // Resolve which sheet to update
-    const sheet =
-      VA_SHEETS.find(s => s.gid === sourceGid) ??
-      (sourceGid === QA_TRACKER.gid ? QA_TRACKER : null);
-
-    if (!sheet) {
-      return NextResponse.json({ error: `Unknown source sheet gid: ${sourceGid}` }, { status: 400 });
+    const dbUpdates = rowFieldsToDb(updates);
+    if (Object.keys(dbUpdates).length === 0) {
+      return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
     }
 
-    await findAndUpdateRow(
-      sheet.spreadsheetId,
-      sheet.gid,
-      { vaName, url, facilityName },
-      updates
-    );
+    const { error } = await supabase
+      .from("entries")
+      .update(dbUpdates)
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

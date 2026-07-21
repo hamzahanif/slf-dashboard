@@ -1,30 +1,33 @@
 import { NextResponse } from "next/server";
-import { fetchSheet } from "@/lib/sheets";
-import { VA_SHEETS, QA_TRACKER } from "@/lib/config";
-import { buildVAStats, detectGlitches, buildSummary } from "@/lib/analytics";
 import { getSessionUser } from "@/lib/auth-server";
-import { scopeRowsToUser, mergeAndDeduplicate } from "@/lib/scope";
+import { supabase } from "@/lib/supabase";
+import { dbToRow } from "@/lib/supabase-rows";
+import { buildVAStats, detectGlitches, buildSummary } from "@/lib/analytics";
 
 export async function GET() {
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-    const qaRows = await fetchSheet(QA_TRACKER.spreadsheetId, QA_TRACKER.gid).catch(() => []);
+    let query = supabase
+      .from("entries")
+      .select("*")
+      .order("date", { ascending: false })
+      .range(0, 14999);
 
-    const vaRowArrays = await Promise.all(
-      VA_SHEETS.map(s => fetchSheet(s.spreadsheetId, s.gid).catch(() => []))
-    );
-    const vaRows = vaRowArrays.flat();
+    if (user.role === "va" && user.vaName) {
+      query = query.ilike("va_name", user.vaName);
+    }
 
-    const vaSheetGids = VA_SHEETS.map(s => ({ gid: s.gid, vaName: s.vaName }));
-    const allRows = scopeRowsToUser(mergeAndDeduplicate(qaRows, vaRows, vaSheetGids, QA_TRACKER.gid), user);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
 
-    const vaStats = buildVAStats(allRows);
-    const glitches = detectGlitches(allRows);
-    const summary = buildSummary(allRows, glitches);
+    const rows = (data ?? []).map(dbToRow);
+    const vaStats = buildVAStats(rows);
+    const glitches = detectGlitches(rows);
+    const summary = buildSummary(rows, glitches);
 
-    return NextResponse.json({ summary, vaStats, glitches, rowCount: allRows.length });
+    return NextResponse.json({ summary, vaStats, glitches, rowCount: rows.length });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
