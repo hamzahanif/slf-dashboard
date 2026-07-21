@@ -407,7 +407,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("overview");
-  const [preset, setPreset] = useState<Preset>("month");
+  const [preset, setPreset] = useState<Preset>("alltime");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [showCustom, setShowCustom] = useState(false);
