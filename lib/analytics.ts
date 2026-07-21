@@ -1,4 +1,4 @@
-import { Row } from "./sheets";
+export interface Row { [key: string]: string; }
 
 export type Period = "daily" | "weekly" | "monthly" | "alltime";
 

@@ -1,4 +1,4 @@
-import type { Row } from "./sheets";
+import type { Row } from "./analytics";
 
 export function dbToRow(e: Record<string, unknown>): Row {
   return {
