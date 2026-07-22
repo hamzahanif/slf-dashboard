@@ -320,9 +320,10 @@ function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean })
 }
 
 // ── Glitch row ───────────────────────────────────────────────────────────────
-function GlitchRow({ g, detail }: { g: Glitch; detail?: boolean }) {
+function GlitchRow({ g, detail, onNavigate }: { g: Glitch; detail?: boolean; onNavigate?: (row: Row) => void }) {
   return (
-    <div className="px-5 py-3 flex flex-wrap items-start gap-3 hover:bg-slate-50/60">
+    <div onClick={() => onNavigate?.(g.row)}
+      className={`px-5 py-3 flex flex-wrap items-start gap-3 hover:bg-slate-50/60 transition-colors ${onNavigate ? "cursor-pointer group/gr" : ""}`}>
       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${GLITCH_PILL[g.type] ?? "bg-slate-100 text-slate-600"}`}>
         {GLITCH_LABELS[g.type] ?? g.type}
       </span>
@@ -335,6 +336,7 @@ function GlitchRow({ g, detail }: { g: Glitch; detail?: boolean }) {
           </div>
         )}
       </div>
+      {onNavigate && <span className="text-[10px] text-green-600 font-semibold opacity-0 group-hover/gr:opacity-100 transition-opacity flex-shrink-0">View →</span>}
     </div>
   );
 }
@@ -392,6 +394,8 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   const [checkUrl, setCheckUrl] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [editRow, setEditRow] = useState<Row | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [showIssuesOnly, setShowIssuesOnly] = useState(false);
   const [qaReviews, setQAReviews] = useState<Record<string, Record<string, string>>>({});
   const [qaLoading, setQALoading] = useState(false);
   const [qaFilter, setQAFilter] = useState<QAStatus | "all">("all");
@@ -434,6 +438,36 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
     const q = search.toLowerCase();
     return filteredRows.filter(r => Object.values(r).some(v => v.toLowerCase().includes(q)));
   }, [filteredRows, search]);
+  // Map _id → glitches for O(1) lookup in the Records table
+  const glitchMap = useMemo(() => {
+    const map = new Map<string, Glitch[]>();
+    if (!data) return map;
+    for (const g of data.glitches) {
+      const id = g.row._id;
+      if (!id) continue;
+      if (!map.has(id)) map.set(id, []);
+      map.get(id)!.push(g);
+    }
+    return map;
+  }, [data]);
+
+  // Navigate from a glitch to its row in the Records tab
+  function goToRecord(row: Row) {
+    setHighlightId(row._id);
+    setSearch("");
+    setShowIssuesOnly(false);
+    setTab("data");
+  }
+
+  // Scroll to highlighted row after tab switch
+  useEffect(() => {
+    if (!highlightId || tab !== "data") return;
+    const timer = setTimeout(() => {
+      document.getElementById("row-" + highlightId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [highlightId, tab]);
+
   const glitchTypes = useMemo(() => data ? Array.from(new Set(data.glitches.map(g => g.type))) : [], [data]);
   const filteredGlitches = useMemo(() => {
     if (!data) return [];
@@ -633,7 +667,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                       <div><h2 className="font-bold text-slate-800">Recent Issues</h2><p className="text-xs text-slate-400 mt-0.5">{filteredGlitches.length} detected</p></div>
                       <button onClick={() => setTab("qa")} className="text-xs font-semibold text-green-600 hover:text-green-700">View all →</button>
                     </div>
-                    <div className="divide-y divide-slate-50">{filteredGlitches.slice(0, 5).map((g, i) => <GlitchRow key={i} g={g}/>)}</div>
+                    <div className="divide-y divide-slate-50">{filteredGlitches.slice(0, 5).map((g, i) => <GlitchRow key={i} g={g} onNavigate={goToRecord}/>)}</div>
                   </div>
                 )}
 
@@ -734,7 +768,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                         <p className="text-xs text-slate-400 mt-0.5">{dateLabel}</p>
                       </div>
                       <div className="divide-y divide-slate-50 max-h-[600px] overflow-y-auto">
-                        {filteredGlitches.map((g, i) => <GlitchRow key={i} g={g} detail/>)}
+                        {filteredGlitches.map((g, i) => <GlitchRow key={i} g={g} detail onNavigate={goToRecord}/>)}
                       </div>
                     </div>
                   )}
@@ -742,71 +776,111 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
               )}
 
               {/* ── RECORDS ── */}
-              {tab === "data" && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="relative">
-                      <Ic n="search" cls="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                      <input type="text" placeholder="Search records…" value={search} onChange={e => setSearch(e.target.value)}
-                        className="bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm w-72 focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"/>
+              {tab === "data" && (() => {
+                const glitchColor: Record<string, string> = {
+                  duplicate_url: "#ef4444", missing_field: "#f59e0b",
+                  missing_listing_id: "#f59e0b", missing_wp_post: "#3b82f6",
+                  duplicate_listing_id: "#a855f7",
+                };
+                const displayRows = showIssuesOnly
+                  ? searchedRows.filter(r => glitchMap.has(r._id))
+                  : searchedRows;
+                const issueCount = searchedRows.filter(r => glitchMap.has(r._id)).length;
+                return (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="relative">
+                        <Ic n="search" cls="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                        <input type="text" placeholder="Search records…" value={search} onChange={e => { setSearch(e.target.value); setHighlightId(null); }}
+                          className="bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm w-72 focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100"/>
+                      </div>
+                      <button onClick={() => { setShowIssuesOnly(v => !v); setHighlightId(null); }}
+                        className={`flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border transition-colors ${showIssuesOnly ? "bg-red-50 border-red-300 text-red-700" : "bg-white border-slate-200 text-slate-600 hover:border-red-300 hover:text-red-600"}`}>
+                        <span className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"/>
+                        Issues only ({issueCount})
+                      </button>
+                      <span className="text-xs text-slate-400">{displayRows.length.toLocaleString()} records · {dateLabel}</span>
+                      <button onClick={() => exportCSV(displayRows, `slf-records-${new Date().toISOString().slice(0,10)}.csv`)}
+                        className="ml-auto flex items-center gap-1.5 bg-white border border-slate-200 hover:border-green-400 hover:text-green-700 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl transition-colors">
+                        <Ic n="download" cls="w-3.5 h-3.5"/> Export CSV
+                      </button>
                     </div>
-                    <span className="text-xs text-slate-400">{searchedRows.length.toLocaleString()} records · {dateLabel}</span>
-                    <button onClick={() => exportCSV(searchedRows, `slf-records-${new Date().toISOString().slice(0,10)}.csv`)}
-                      className="ml-auto flex items-center gap-1.5 bg-white border border-slate-200 hover:border-green-400 hover:text-green-700 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl transition-colors">
-                      <Ic n="download" cls="w-3.5 h-3.5"/> Export CSV
-                    </button>
-                  </div>
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto max-h-[640px]">
-                      {searchedRows.length > 0 ? (() => {
-                        const cols = Object.keys(searchedRows[0]).filter(k => !k.startsWith("_"));
-                        return (
-                          <table className="min-w-full text-xs">
-                            <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
-                              <tr>
-                                <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider w-16">Edit</th>
-                                {cols.map(c => <th key={c} className="px-3 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">{c}</th>)}
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                              {searchedRows.map((row, i) => (
-                                <tr key={i} className="hover:bg-slate-50/80 group">
-                                  <td className="px-4 py-2.5">
-                                    <button onClick={() => setEditRow(row)}
-                                      className="opacity-0 group-hover:opacity-100 transition-opacity bg-green-50 hover:bg-green-100 text-green-700 text-[10px] font-bold px-2 py-1 rounded-lg border border-green-200">
-                                      Edit
-                                    </button>
-                                  </td>
-                                  {cols.map(c => {
-                                    const raw = row[c] ?? "";
-                                    const isDate = c === "Date" && /^Date\(/.test(raw);
-                                    const display = isDate ? (() => { const d = parseRowDate(raw); return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : raw; })() : raw;
-                                    const isUrl = display.startsWith("http");
-                                    return (
-                                      <td key={c} className="px-3 py-2.5 text-slate-600 whitespace-nowrap max-w-[180px] truncate">
-                                        {isUrl ? (
-                                          <a href={display} target="_blank" rel="noreferrer" className="text-green-600 hover:underline">
-                                            {display.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40) + (display.length > 50 ? "…" : "")}
-                                          </a>
-                                        ) : display}
-                                      </td>
-                                    );
-                                  })}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto max-h-[640px]">
+                        {displayRows.length > 0 ? (() => {
+                          const cols = Object.keys(displayRows[0]).filter(k => !k.startsWith("_"));
+                          return (
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                                <tr>
+                                  <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider w-24">Status</th>
+                                  {cols.map(c => <th key={c} className="px-3 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">{c}</th>)}
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        );
-                      })() : (
-                        <div className="py-20 flex flex-col items-center gap-3 text-slate-300">
-                          <Ic n="table" cls="w-10 h-10"/>
-                          <p className="text-sm">No records for {dateLabel}</p>
-                        </div>
-                      )}
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {displayRows.map((row, i) => {
+                                  const rowGlitches = glitchMap.get(row._id) ?? [];
+                                  const isHighlighted = row._id === highlightId;
+                                  const topGlitch = rowGlitches[0];
+                                  const borderColor = topGlitch ? (glitchColor[topGlitch.type] ?? "#94a3b8") : null;
+                                  return (
+                                    <tr key={row._id || i}
+                                      id={"row-" + row._id}
+                                      className={`group transition-colors ${isHighlighted ? "bg-yellow-50 ring-2 ring-inset ring-yellow-400" : rowGlitches.length > 0 ? "bg-red-50/20 hover:bg-red-50/40" : "hover:bg-slate-50/80"}`}
+                                      style={borderColor && !isHighlighted ? { boxShadow: `inset 4px 0 0 ${borderColor}` } : undefined}>
+                                      <td className="px-4 py-2.5">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <button onClick={() => setEditRow(row)}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity bg-green-50 hover:bg-green-100 text-green-700 text-[10px] font-bold px-2 py-1 rounded-lg border border-green-200 flex-shrink-0">
+                                            Edit
+                                          </button>
+                                          {rowGlitches.length > 0 && (
+                                            <div className="flex flex-wrap gap-1">
+                                              {rowGlitches.slice(0, 2).map((g, gi) => (
+                                                <span key={gi} title={g.detail}
+                                                  className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${GLITCH_PILL[g.type] ?? "bg-slate-100 text-slate-600"}`}>
+                                                  {GLITCH_LABELS[g.type] ?? g.type}
+                                                </span>
+                                              ))}
+                                              {rowGlitches.length > 2 && (
+                                                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">+{rowGlitches.length - 2}</span>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+                                      {cols.map(c => {
+                                        const raw = row[c] ?? "";
+                                        const isDate = c === "Date" && /^Date\(/.test(raw);
+                                        const display = isDate ? (() => { const d = parseRowDate(raw); return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : raw; })() : raw;
+                                        const isUrl = display.startsWith("http");
+                                        return (
+                                          <td key={c} className="px-3 py-2.5 text-slate-600 whitespace-nowrap max-w-[180px] truncate">
+                                            {isUrl ? (
+                                              <a href={display} target="_blank" rel="noreferrer" className="text-green-600 hover:underline">
+                                                {display.replace(/^https?:\/\/(www\.)?/, "").slice(0, 40) + (display.length > 50 ? "…" : "")}
+                                              </a>
+                                            ) : display}
+                                          </td>
+                                        );
+                                      })}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          );
+                        })() : (
+                          <div className="py-20 flex flex-col items-center gap-3 text-slate-300">
+                            <Ic n="table" cls="w-10 h-10"/>
+                            <p className="text-sm">{showIssuesOnly ? "No issues in this period" : `No records for ${dateLabel}`}</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* ── QA REVIEW (admin only) ── */}
               {tab === "qareview" && user.role === "admin" && (() => {
