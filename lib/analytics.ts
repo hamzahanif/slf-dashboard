@@ -84,13 +84,15 @@ export function detectGlitches(rows: Row[]): Glitch[] {
 
     // Missing SLF Listing ID
     const listingId = row["SLF Listing ID"]?.trim() || row["SLF Listing ID "]?.trim();
-    if (!listingId) {
+    const actionType = (row["Action Type"] ?? "").trim().toLowerCase();
+    const isSkippedOrDuplicate = /duplicate|skipped/i.test(actionType);
+    if (!listingId && !isSkippedOrDuplicate) {
       glitches.push({ type: "missing_listing_id", row, rowIndex: i + 2, detail: "No SLF Listing ID" });
     }
 
     // Missing WP Post time
     const wpPost = row["WP- Post time"]?.trim() || row["WP Post time"]?.trim();
-    if (!wpPost) {
+    if (!wpPost && !isSkippedOrDuplicate) {
       glitches.push({ type: "missing_wp_post", row, rowIndex: i + 2, detail: "No WP Post time" });
     }
 
