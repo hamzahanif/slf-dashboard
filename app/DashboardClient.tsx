@@ -319,6 +319,127 @@ function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean })
   );
 }
 
+// ── VA Scoreboard ─────────────────────────────────────────────────────────────
+function VAScoreboard({ rows }: { rows: Row[] }) {
+  const RANK_BADGE = ["🥇", "🥈", "🥉"];
+
+  const per = useMemo(() => {
+    const map = new Map<string, { total: number; listings: number; live: number; passed: number; days: Set<string> }>();
+    for (const r of rows) {
+      const va = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
+      if (!map.has(va)) map.set(va, { total: 0, listings: 0, live: 0, passed: 0, days: new Set() });
+      const s = map.get(va)!;
+      s.total++;
+      const hasListing = !!r["SLF Listing ID"]?.trim();
+      const isLive = /live/i.test(r["Handoff Notes"] ?? "");
+      const hasWp = !!r["WP- Post time"]?.trim();
+      if (hasListing) s.listings++;
+      if (isLive) s.live++;
+      if (isLive && hasListing) s.passed++;
+      const d = r["Date"]?.slice(0, 10);
+      if (d) s.days.add(d);
+    }
+    return Array.from(map.entries())
+      .map(([vaName, s]) => ({
+        vaName,
+        total: s.total,
+        listings: s.listings,
+        live: s.live,
+        passed: s.passed,
+        livePct: s.listings ? Math.round((s.live / s.listings) * 100) : 0,
+        passedPct: s.listings ? Math.round((s.passed / s.listings) * 100) : 0,
+        avgDay: s.days.size ? +(s.total / s.days.size).toFixed(1) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [rows]);
+
+  if (!per.length) return <div className="py-10 text-center text-slate-400 text-sm">No entries for this period.</div>;
+
+  const Bar = ({ pct, color }: { pct: number; color: string }) => (
+    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1 mb-0.5">
+      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      {/* Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {per.map((p, i) => {
+          const c = vaColor(p.vaName);
+          return (
+            <div key={p.vaName} className="rounded-2xl border-2 p-4 bg-white relative overflow-hidden hover:shadow-md transition-shadow" style={{ borderColor: c }}>
+              <div className="absolute top-3 right-3 text-lg leading-none">{RANK_BADGE[i] ?? `#${i + 1}`}</div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }} />
+                <span className="font-bold text-xs text-slate-700 truncate">{p.vaName}</span>
+              </div>
+              <div className="text-2xl font-black text-slate-800 leading-none">{p.total.toLocaleString()}</div>
+              <div className="text-[10px] text-slate-400 mb-3">entries</div>
+
+              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live</div>
+              <Bar pct={p.livePct} color="#16a34a" />
+              <div className="text-xs font-semibold text-slate-700">{p.live.toLocaleString()} <span className="font-normal text-slate-400">({p.livePct}%)</span></div>
+
+              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mt-2.5">Passed</div>
+              <Bar pct={p.passedPct} color="#2563eb" />
+              <div className="text-xs font-semibold text-slate-700">{p.passed.toLocaleString()} <span className="font-normal text-slate-400">({p.passedPct}%)</span></div>
+
+              <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
+                <span><b className="text-slate-700">{p.listings}</b> listings</span>
+                <span><b className="text-slate-700">{p.avgDay}</b>/day</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Comparison table */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full text-sm min-w-[600px]">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="text-left px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">VA</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Entries</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Listings</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live %</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Passed %</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Avg/day</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {per.map((p, i) => {
+              const c = vaColor(p.vaName);
+              return (
+                <tr key={p.vaName} className="hover:bg-slate-50/60 transition-colors">
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-2 font-medium text-slate-800">
+                      <span className="text-sm leading-none">{RANK_BADGE[i] ?? `#${i + 1}`}</span>
+                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }} />
+                      {p.vaName}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold tabular-nums" style={{ color: c }}>{p.total.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.listings.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.live.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">
+                    <span className={`font-bold tabular-nums ${p.livePct >= 70 ? "text-green-600" : p.livePct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.livePct}%</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className={`font-bold tabular-nums ${p.passedPct >= 70 ? "text-green-600" : p.passedPct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.passedPct}%</span>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.avgDay}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Glitch row ───────────────────────────────────────────────────────────────
 function GlitchRow({ g, detail, onNavigate }: { g: Glitch; detail?: boolean; onNavigate?: (row: Row) => void }) {
   return (
@@ -680,6 +801,17 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
               {/* ── PERFORMANCE ── */}
               {tab === "performance" && <>
+                {/* VA Scoreboard — top of performance tab */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="mb-4 flex items-start justify-between">
+                    <div>
+                      <h2 className="font-bold text-slate-800">VA Performance Comparison</h2>
+                      <p className="text-xs text-slate-400 mt-0.5">Ranked by total entries · {dateLabel}</p>
+                    </div>
+                  </div>
+                  <VAScoreboard rows={filteredRows} />
+                </div>
+
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                   <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                     <div className="mb-4"><h2 className="font-bold text-slate-800">Daily Activity Trend</h2><p className="text-xs text-slate-400 mt-0.5">{dateLabel}</p></div>
