@@ -18,6 +18,7 @@ const VA_COLORS: Record<string, string> = {
   "Abdul Rehman": "#f59e0b", "Fazeela": "#ec4899", "Janine": "#8b5cf6",
 };
 const INACTIVE_VAS = new Set(["Janine"]);
+const ACTIVE_VA_COUNT = Object.keys(VA_COLORS).filter(k => !INACTIVE_VAS.has(k)).length;
 function vaColor(n: string) { return INACTIVE_VAS.has(n) ? "#94a3b8" : (VA_COLORS[n] ?? "#64748b"); }
 
 const GLITCH_LABELS: Record<string, string> = {
@@ -74,7 +75,7 @@ function toTitleCase(s: string) { return s.replace(/\b\w/g, c => c.toUpperCase()
 function buildStats(rows: Row[]): VAStat[] {
   const m = new Map<string, { display: string; rows: Row[] }>();
   for (const r of rows) {
-    const raw = r["VA Name"]?.trim() || "Unknown";
+    const raw = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
     const key = raw.toLowerCase();
     if (!m.has(key)) m.set(key, { display: toTitleCase(raw), rows: [] });
     m.get(key)!.rows.push(r);
@@ -370,7 +371,7 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
   return (
     <div className="space-y-5">
       {/* Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {per.map((p, i) => {
           const c = vaColor(p.vaName);
           return (
@@ -752,7 +753,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
               {tab === "overview" && <>
                 <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
                   <KpiCard label="Total Entries" value={filteredRows.length} accent="#16a34a"/>
-                  <KpiCard label="Active VAs" value={vaStats.filter(s => !INACTIVE_VAS.has(s.vaName)).length || 4} accent="#2563eb"/>
+                  <KpiCard label="Active VAs" value={ACTIVE_VA_COUNT} accent="#2563eb"/>
                   <KpiCard label="Inactive VAs" value={INACTIVE_VAS.size} accent="#94a3b8"/>
                   <KpiCard label="FB Groups" value={new Set(filteredRows.map(r => r["Facebook Group Name"]?.trim()).filter(Boolean)).size} accent="#8b5cf6"/>
                   <KpiCard label="Total Issues" value={filteredGlitches.length} accent="#ef4444"/>
