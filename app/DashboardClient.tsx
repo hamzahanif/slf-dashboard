@@ -17,7 +17,8 @@ const VA_COLORS: Record<string, string> = {
   "Mico Real": "#16a34a", "Muhammad Salman": "#2563eb",
   "Abdul Rehman": "#f59e0b", "Fazeela": "#ec4899", "Janine": "#8b5cf6",
 };
-function vaColor(n: string) { return VA_COLORS[n] ?? "#64748b"; }
+const INACTIVE_VAS = new Set(["Janine"]);
+function vaColor(n: string) { return INACTIVE_VAS.has(n) ? "#94a3b8" : (VA_COLORS[n] ?? "#64748b"); }
 
 const GLITCH_LABELS: Record<string, string> = {
   duplicate_url: "Duplicate FB URL", missing_field: "Missing Field",
@@ -198,12 +199,14 @@ function VABarChart({ stats }: { stats: VAStat[] }) {
     <div className="space-y-3">
       {stats.map(s => {
         const pct = (s.count / max) * 100, c = vaColor(s.vaName);
+        const inactive = INACTIVE_VAS.has(s.vaName);
         return (
           <div key={s.vaName} onMouseEnter={() => setHov(s.vaName)} onMouseLeave={() => setHov(null)}>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
+              <span className={`text-xs font-medium flex items-center gap-2 ${inactive ? "text-slate-400" : "text-slate-700"}`}>
                 <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: c }}/>
                 {s.vaName}
+                {inactive && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400 border border-slate-200">Inactive</span>}
               </span>
               <span className="text-xs font-bold tabular-nums" style={{ color: c }}>{s.count}</span>
             </div>
@@ -292,7 +295,9 @@ function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean })
             <tr key={s.vaName} className="hover:bg-slate-50/60 transition-colors">
               <td className="px-5 py-3">
                 <span className="flex items-center gap-2.5 font-medium text-slate-800">
-                  <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }}/>{s.vaName}
+                  <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }}/>
+                  <span className={INACTIVE_VAS.has(s.vaName) ? "text-slate-400" : ""}>{s.vaName}</span>
+                  {INACTIVE_VAS.has(s.vaName) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400 border border-slate-200">Inactive</span>}
                 </span>
               </td>
               <td className="px-5 py-3 text-right font-bold tabular-nums" style={{ color: c }}>{s.count.toLocaleString()}</td>
@@ -340,6 +345,7 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
       if (d) s.days.add(d);
     }
     return Array.from(map.entries())
+      .filter(([vaName]) => !INACTIVE_VAS.has(vaName))
       .map(([vaName, s]) => ({
         vaName,
         total: s.total,
@@ -744,9 +750,10 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
               {/* ── OVERVIEW ── */}
               {tab === "overview" && <>
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
                   <KpiCard label="Total Entries" value={filteredRows.length} accent="#16a34a"/>
-                  <KpiCard label="VAs Active" value={vaStats.length} accent="#2563eb"/>
+                  <KpiCard label="Active VAs" value={vaStats.filter(s => !INACTIVE_VAS.has(s.vaName)).length || 4} accent="#2563eb"/>
+                  <KpiCard label="Inactive VAs" value={INACTIVE_VAS.size} accent="#94a3b8"/>
                   <KpiCard label="FB Groups" value={new Set(filteredRows.map(r => r["Facebook Group Name"]?.trim()).filter(Boolean)).size} accent="#8b5cf6"/>
                   <KpiCard label="Total Issues" value={filteredGlitches.length} accent="#ef4444"/>
                   <KpiCard label="Missing Fields" value={filteredGlitches.filter(g => g.type === "missing_field").length} accent="#f59e0b"/>
