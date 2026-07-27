@@ -6,20 +6,16 @@ import type { Glitch, SummaryStats } from "@/lib/analytics";
 import type { SessionPayload } from "@/lib/session";
 import LogEntryForm from "./LogEntryForm";
 import EditRowModal from "./EditRowModal";
+import DashboardHome from "./DashboardHome";
+import {
+  Row, VA_COLORS, INACTIVE_VAS, ACTIVE_VA_COUNT, vaColor,
+  parseRowDate, toYMD, startOfWeek, filterByRange,
+} from "@/lib/dash";
 
-type Tab = "overview" | "performance" | "postcheck" | "qa" | "data" | "logentry" | "qareview";
+type Tab = "dashboard" | "performance" | "postcheck" | "qa" | "data" | "logentry" | "qareview";
 type Preset = "today" | "yesterday" | "week" | "month" | "alltime" | "custom";
 interface DashData { summary: SummaryStats; glitches: Glitch[]; }
-interface Row { [key: string]: string; }
 interface VAStat { vaName: string; count: number; rows: Row[]; }
-
-const VA_COLORS: Record<string, string> = {
-  "Mico Real": "#16a34a", "Muhammad Salman": "#2563eb",
-  "Abdul Rehman": "#f59e0b", "Fazeela": "#ec4899", "Janine": "#8b5cf6",
-};
-const INACTIVE_VAS = new Set(["Janine"]);
-const ACTIVE_VA_COUNT = Object.keys(VA_COLORS).filter(k => !INACTIVE_VAS.has(k)).length;
-function vaColor(n: string) { return INACTIVE_VAS.has(n) ? "#94a3b8" : (VA_COLORS[n] ?? "#64748b"); }
 
 const GLITCH_LABELS: Record<string, string> = {
   duplicate_url: "Duplicate FB URL", missing_field: "Missing Field",
@@ -32,17 +28,6 @@ const GLITCH_PILL: Record<string, string> = {
   duplicate_listing_id: "bg-purple-100 text-purple-700",
 };
 
-function parseRowDate(v: string): Date | null {
-  if (!v) return null;
-  const g = v.match(/^Date\((\d+),(\d+),(\d+)\)$/);
-  if (g) return new Date(+g[1], +g[2], +g[3]);
-  const d = new Date(v); return isNaN(d.getTime()) ? null : d;
-}
-function toYMD(d: Date) { return d.toISOString().slice(0, 10); }
-function startOfWeek(d: Date) {
-  const day = d.getDay(), diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  return new Date(d.getFullYear(), d.getMonth(), diff);
-}
 function getRange(p: Preset, cs: string, ce: string): [Date, Date] | null {
   const now = new Date(), t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (p === "alltime") return null;
@@ -57,11 +42,6 @@ function getRange(p: Preset, cs: string, ce: string): [Date, Date] | null {
     return [s, e];
   }
   return null;
-}
-function filterByRange(rows: Row[], r: [Date, Date] | null) {
-  if (!r) return rows;
-  const [s, e] = r, ed = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
-  return rows.filter(row => { const d = parseRowDate(row["Date"]); return d ? d >= s && d < ed : false; });
 }
 function fmtRange(r: [Date, Date] | null, p: Preset) {
   if (!r) return "All Time";
@@ -751,7 +731,7 @@ function VADailyBreakdown({ va }: { va: VAStat }) {
 export default function DashboardClient({ user }: { user: SessionPayload }) {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("dashboard");
   const [preset, setPreset] = useState<Preset>("alltime");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
@@ -853,7 +833,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   function handlePreset(p: Preset) { setPreset(p); setShowCustom(p === "custom"); }
 
   const NAV = [
-    { id: "overview" as Tab, label: "Overview", icon: "home" },
+    { id: "dashboard" as Tab, label: "Dashboard", icon: "home" },
     { id: "performance" as Tab, label: "Performance", icon: "chart" },
     { id: "postcheck" as Tab, label: "Post Check", icon: "search" },
     { id: "qa" as Tab, label: "QA & Glitches", icon: "alert", badge: filteredGlitches.length || undefined },
@@ -862,7 +842,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
     { id: "logentry" as Tab, label: "Log Entry", icon: "plus" },
   ];
   const TAB_TITLE: Record<Tab, string> = {
-    overview: "Dashboard Overview", performance: "VA Performance",
+    dashboard: "Dashboard", performance: "VA Performance",
     postcheck: "Post Check", qa: "QA & Glitches", data: "Records",
     qareview: "QA Review", logentry: "Log Entry",
   };
@@ -946,8 +926,8 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
           </div>
         </header>
 
-        {/* ── Date filter bar ── */}
-        {tab !== "logentry" && (
+        {/* ── Date filter bar (Dashboard brings its own richer filter bar) ── */}
+        {tab !== "logentry" && tab !== "dashboard" && (
           <div className="bg-white border-b border-slate-100 px-4 py-2.5 flex flex-wrap items-center gap-2 flex-shrink-0">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:block">Period</span>
             <div className="flex flex-wrap gap-1">
@@ -992,63 +972,8 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
           {tab !== "logentry" && !loading && !error && (
             <div className="space-y-5">
 
-              {/* ── OVERVIEW ── */}
-              {tab === "overview" && <>
-                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-                  <KpiCard label="Total Entries" value={filteredRows.length} accent="#16a34a"/>
-                  <KpiCard label="Active VAs" value={ACTIVE_VA_COUNT} accent="#2563eb"/>
-                  <KpiCard label="Inactive VAs" value={INACTIVE_VAS.size} accent="#94a3b8"/>
-                  <KpiCard label="FB Groups" value={new Set(filteredRows.map(r => r["Facebook Group Name"]?.trim()).filter(Boolean)).size} accent="#8b5cf6"/>
-                  <KpiCard label="Total Issues" value={filteredGlitches.length} accent="#ef4444"/>
-                  <KpiCard label="Missing Fields" value={filteredGlitches.filter(g => g.type === "missing_field").length} accent="#f59e0b"/>
-                  <KpiCard label="Duplicate URLs" value={filteredGlitches.filter(g => g.type === "duplicate_url").length} accent="#ec4899"/>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    <div className="flex items-start justify-between mb-4">
-                      <div><h2 className="font-bold text-slate-800">Daily Activity</h2><p className="text-xs text-slate-400 mt-0.5">Entries submitted per day</p></div>
-                      <span className="text-[11px] text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1">{dateLabel}</span>
-                    </div>
-                    {filteredRows.length > 0 ? <TrendChart rows={filteredRows} range={dateRange}/> : <div className="h-36 flex items-center justify-center text-slate-300 text-sm">No data for this period</div>}
-                  </div>
-
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    <div className="mb-4"><h2 className="font-bold text-slate-800">VA Comparison</h2><p className="text-xs text-slate-400 mt-0.5">Entries by team member</p></div>
-                    {vaStats.length > 0 ? <VABarChart stats={vaStats}/> : <div className="text-slate-300 text-sm text-center py-8">No data</div>}
-                  </div>
-                </div>
-
-                {approval.tracked > 0 && (
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    <div className="mb-4"><h2 className="font-bold text-slate-800">Comment Approval</h2><p className="text-xs text-slate-400 mt-0.5">Status breakdown · {dateLabel}</p></div>
-                    <DonutChart approved={approval.approved} pending={approval.pending} rejected={approval.rejected} total={filteredRows.length}/>
-                  </div>
-                )}
-
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                    <div><h2 className="font-bold text-slate-800">Team Performance</h2><p className="text-xs text-slate-400 mt-0.5">{dateLabel}</p></div>
-                  </div>
-                  <PerfTable stats={vaStats}/>
-                </div>
-
-                {filteredGlitches.length > 0 && (
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                      <div><h2 className="font-bold text-slate-800">Recent Issues</h2><p className="text-xs text-slate-400 mt-0.5">{filteredGlitches.length} detected</p></div>
-                      <button onClick={() => setTab("qa")} className="text-xs font-semibold text-green-600 hover:text-green-700">View all →</button>
-                    </div>
-                    <div className="divide-y divide-slate-50">{filteredGlitches.slice(0, 5).map((g, i) => <GlitchRow key={i} g={g} onNavigate={goToRecord}/>)}</div>
-                  </div>
-                )}
-
-                {approval.tracked === 0 && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-700">
-                    💡 Add a <strong>Comment Status</strong> column to your sheet (values: Pending / Approved / Rejected / Live) to unlock approval-rate tracking.
-                  </div>
-                )}
-              </>}
+              {/* ── DASHBOARD ── */}
+              {tab === "dashboard" && <DashboardHome rows={rows}/>}
 
               {/* ── PERFORMANCE ── */}
               {tab === "performance" && <>
