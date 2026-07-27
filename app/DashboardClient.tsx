@@ -831,7 +831,9 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    // h-screen (not min-h-screen) so the shell is exactly the viewport: that is
+    // what lets <main> be a bounded scroll container instead of growing the page.
+    <div className="h-screen overflow-hidden bg-slate-50 flex">
       {/* Sidebar backdrop */}
       {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)}/>}
 
@@ -880,7 +882,10 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
       </aside>
 
       {/* ── Main wrapper ── */}
-      <div className="flex-1 flex flex-col min-h-screen lg:ml-64">
+      {/* min-w-0 is load-bearing: a flex item defaults to min-width:auto, which
+          would stretch this column to the Records table's full intrinsic width
+          and scroll the whole page sideways instead of just the table. */}
+      <div className="flex-1 min-w-0 flex flex-col lg:ml-64">
 
         {/* ── Top bar ── */}
         <header className="sticky top-0 z-30 bg-white border-b border-slate-200 h-14 flex items-center px-4 gap-3 flex-shrink-0">
@@ -934,7 +939,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
         {/* ── Content ── */}
         {/* Records owns its own internal scroll, so the page must not scroll too. */}
-        <main className={`flex-1 p-5 min-h-0 ${tab === "data" ? "overflow-hidden" : "overflow-auto"}`}>
+        <main className={`flex-1 min-h-0 min-w-0 p-5 ${tab === "data" ? "overflow-hidden" : "overflow-auto"}`}>
 
           {tab === "logentry" && <LogEntryForm user={user}/>}
 
