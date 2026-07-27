@@ -536,28 +536,34 @@ function RankedList({ items, onPick, selected, max: showMax = 8, valueLabel = "e
 function DataHealth({ rows }: { rows: Row[] }) {
   const h = useMemo(() => {
     const skip = (r: Row) => /duplicate|skipped/i.test(r["Action Type"] ?? "");
+    // VAs who have left the team can't fix anything, so their rows are excluded
+    // from the score and the issue counts. They still seed the duplicate maps —
+    // an active VA reposting one of their old URLs is still worth flagging.
+    const live = rows.filter(r => !INACTIVE_VAS.has(vaOf(r)));
+    const retired = rows.length - live.length;
     const urls = new Map<string, number>(), ids = new Map<string, number>();
     let dupUrl = 0, dupId = 0;
     for (const r of rows) {
+      const actionable = !INACTIVE_VAS.has(vaOf(r));
       const u = (r["Direct Facebook Post URL"] ?? "").trim().toLowerCase();
-      if (u) { const c = (urls.get(u) ?? 0); if (c) dupUrl++; urls.set(u, c + 1); }
+      if (u) { const c = (urls.get(u) ?? 0); if (c && actionable) dupUrl++; urls.set(u, c + 1); }
       const id = (r["SLF Listing ID"] ?? "").trim();
-      if (id) { const c = (ids.get(id) ?? 0); if (c) dupId++; ids.set(id, c + 1); }
+      if (id) { const c = (ids.get(id) ?? 0); if (c && actionable) dupId++; ids.set(id, c + 1); }
     }
     const issues = [
-      { label: "Missing listing ID", v: rows.filter(r => !hasListing(r) && !skip(r)).length, c: "#f59e0b" },
-      { label: "Missing WP post time", v: rows.filter(r => !hasWp(r) && !skip(r)).length, c: "#2563eb" },
-      { label: "Missing facility name", v: rows.filter(r => !r["Facility Name"]?.trim()).length, c: "#ec4899" },
-      { label: "Missing FB post URL", v: rows.filter(r => !r["Direct Facebook Post URL"]?.trim()).length, c: "#8b5cf6" },
+      { label: "Missing listing ID", v: live.filter(r => !hasListing(r) && !skip(r)).length, c: "#f59e0b" },
+      { label: "Missing WP post time", v: live.filter(r => !hasWp(r) && !skip(r)).length, c: "#2563eb" },
+      { label: "Missing facility name", v: live.filter(r => !r["Facility Name"]?.trim()).length, c: "#ec4899" },
+      { label: "Missing FB post URL", v: live.filter(r => !r["Direct Facebook Post URL"]?.trim()).length, c: "#8b5cf6" },
       { label: "Duplicate FB URL", v: dupUrl, c: "#ef4444" },
       { label: "Duplicate listing ID", v: dupId, c: "#dc2626" },
     ].sort((a, b) => b.v - a.v);
-    const clean = rows.filter(r =>
+    const clean = live.filter(r =>
       (hasListing(r) || skip(r)) && (hasWp(r) || skip(r)) &&
       !!r["Facility Name"]?.trim() && !!r["Direct Facebook Post URL"]?.trim()).length;
     // Floor, not round — a single incomplete record must never display as 100%.
-    const score = rows.length ? Math.floor((clean / rows.length) * 100) : 0;
-    return { issues, clean, score };
+    const score = live.length ? Math.floor((clean / live.length) * 100) : 0;
+    return { issues, clean, score, total: live.length, retired };
   }, [rows]);
   if (!rows.length) return <Empty h="h-32" />;
   const tone = h.score >= 85 ? "#16a34a" : h.score >= 60 ? "#f59e0b" : "#ef4444";
@@ -584,7 +590,8 @@ function DataHealth({ rows }: { rows: Row[] }) {
           </div>
         ))}
         <p className="col-span-full text-[10px] text-slate-400 pt-2 mt-1 border-t border-slate-100">
-          {fmtNum(h.clean)} of {fmtNum(rows.length)} records complete. Rows marked <i>duplicate</i> or <i>skipped</i> are exempt from listing-ID and WP-time checks.
+          {fmtNum(h.clean)} of {fmtNum(h.total)} records complete. Rows marked <i>duplicate</i> or <i>skipped</i> are exempt from listing-ID and WP-time checks.
+          {h.retired > 0 && <> {fmtNum(h.retired)} {h.retired === 1 ? "record" : "records"} from former team members excluded.</>}
         </p>
       </div>
     </div>
@@ -722,7 +729,7 @@ export default function DashboardHome({ rows }: { rows: Row[] }) {
     for (const r of cur) { const h = wpHour(r); if (h !== null) byHour.set(h, (byHour.get(h) ?? 0) + 1); }
     const ph = [...byHour.entries()].sort((a, b) => b[1] - a[1])[0];
     if (ph) out.push({ k: "Peak publish hour", v: `${((ph[0] + 11) % 12) + 1}${ph[0] < 12 ? "am" : "pm"} — ${ph[1]} listings`, tone: "#8b5cf6" });
-    const gap = cur.filter(r => !hasListing(r) && !/duplicate|skipped/i.test(r["Action Type"] ?? "")).length;
+    const gap = cur.filter(r => !hasListing(r) && !/duplicate|skipped/i.test(r["Action Type"] ?? "") && !INACTIVE_VAS.has(vaOf(r))).length;
     out.push({ k: "Needs attention", v: gap ? `${fmtNum(gap)} ${gap === 1 ? "entry" : "entries"} missing a listing ID` : "No missing listing IDs", tone: gap ? "#ef4444" : "#16a34a" });
     return out;
   }, [cur]);
@@ -848,7 +855,7 @@ export default function DashboardHome({ rows }: { rows: Row[] }) {
       </div>
 
       {/* ── Data health ── */}
-      <Card title="Data health" sub={`Completeness of the ${fmtNum(cur.length)} records in view`}>
+      <Card title="Data health" sub="Field completeness and duplicate checks on actionable records">
         <DataHealth rows={cur} />
       </Card>
     </div>

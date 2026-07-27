@@ -1,3 +1,5 @@
+import { INACTIVE_VAS, vaOf } from "./dash";
+
 export interface Row { [key: string]: string; }
 
 export type Period = "daily" | "weekly" | "monthly" | "alltime";
@@ -75,10 +77,16 @@ export function detectGlitches(rows: Row[]): Glitch[] {
   const requiredFields = ["Date", "VA Name", "Facebook Group Name", "Direct Facebook Post URL", "Facility Name"];
 
   rows.forEach((row, i) => {
+    // Rows belonging to VAs who have left the team are not actionable, so we
+    // never report issues against them. They still seed the duplicate maps
+    // below — an active VA reposting one of their old URLs IS actionable.
+    const retired = INACTIVE_VAS.has(vaOf(row));
+    const push = (g: Glitch) => { if (!retired) glitches.push(g); };
+
     // Missing required fields
     for (const field of requiredFields) {
       if (!row[field]?.trim()) {
-        glitches.push({ type: "missing_field", row, rowIndex: i + 2, detail: `Missing "${field}"` });
+        push({ type: "missing_field", row, rowIndex: i + 2, detail: `Missing "${field}"` });
       }
     }
 
@@ -87,20 +95,20 @@ export function detectGlitches(rows: Row[]): Glitch[] {
     const actionType = (row["Action Type"] ?? "").trim().toLowerCase();
     const isSkippedOrDuplicate = /duplicate|skipped/i.test(actionType);
     if (!listingId && !isSkippedOrDuplicate) {
-      glitches.push({ type: "missing_listing_id", row, rowIndex: i + 2, detail: "No SLF Listing ID" });
+      push({ type: "missing_listing_id", row, rowIndex: i + 2, detail: "No SLF Listing ID" });
     }
 
     // Missing WP Post time
     const wpPost = row["WP- Post time"]?.trim() || row["WP Post time"]?.trim();
     if (!wpPost && !isSkippedOrDuplicate) {
-      glitches.push({ type: "missing_wp_post", row, rowIndex: i + 2, detail: "No WP Post time" });
+      push({ type: "missing_wp_post", row, rowIndex: i + 2, detail: "No WP Post time" });
     }
 
     // Duplicate Facebook Post URL
     const url = row["Direct Facebook Post URL"]?.trim();
     if (url) {
       if (urlSeen.has(url)) {
-        glitches.push({ type: "duplicate_url", row, rowIndex: i + 2, detail: `Duplicate FB URL (first seen on row ${urlSeen.get(url)})` });
+        push({ type: "duplicate_url", row, rowIndex: i + 2, detail: `Duplicate FB URL (first seen on row ${urlSeen.get(url)})` });
       } else {
         urlSeen.set(url, i + 2);
       }
@@ -109,7 +117,7 @@ export function detectGlitches(rows: Row[]): Glitch[] {
     // Duplicate SLF Listing ID
     if (listingId) {
       if (listingSeen.has(listingId)) {
-        glitches.push({ type: "duplicate_listing_id", row, rowIndex: i + 2, detail: `Duplicate SLF Listing ID (first seen on row ${listingSeen.get(listingId)})` });
+        push({ type: "duplicate_listing_id", row, rowIndex: i + 2, detail: `Duplicate SLF Listing ID (first seen on row ${listingSeen.get(listingId)})` });
       } else {
         listingSeen.set(listingId, i + 2);
       }
