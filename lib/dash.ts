@@ -88,5 +88,22 @@ export function filterByRange(rows: Row[], r: [Date, Date] | null) {
   return rows.filter(row => { const d = parseRowDate(row["Date"]); return d ? d >= s && d < ed : false; });
 }
 
+// ── Glitch presentation ───────────────────────────────────────────────────────
+export const GLITCH_LABELS: Record<string, string> = {
+  duplicate_url: "Duplicate FB URL", missing_field: "Missing Field",
+  missing_listing_id: "Missing Listing ID", missing_wp_post: "Missing WP Post",
+  duplicate_listing_id: "Duplicate Listing ID",
+};
+export const GLITCH_PILL: Record<string, string> = {
+  duplicate_url: "bg-red-100 text-red-700", missing_field: "bg-orange-100 text-orange-700",
+  missing_listing_id: "bg-yellow-100 text-yellow-700", missing_wp_post: "bg-blue-100 text-blue-700",
+  duplicate_listing_id: "bg-purple-100 text-purple-700",
+};
+export const GLITCH_ACCENT: Record<string, string> = {
+  duplicate_url: "#ef4444", missing_field: "#f59e0b",
+  missing_listing_id: "#f59e0b", missing_wp_post: "#3b82f6",
+  duplicate_listing_id: "#a855f7",
+};
+
 export function fmtNum(n: number) { return n.toLocaleString(); }
 export function pct(part: number, whole: number) { return whole ? Math.round((part / whole) * 100) : 0; }
