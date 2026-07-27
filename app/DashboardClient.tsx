@@ -325,6 +325,249 @@ function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean })
   );
 }
 
+// ── VA Comparison Line Chart ──────────────────────────────────────────────────
+function VAComparisonChart({ rows }: { rows: Row[] }) {
+  const ALL_VA_NAMES = Object.keys(VA_COLORS);
+  const [activeVAs, setActiveVAs] = useState<Set<string>>(new Set(ALL_VA_NAMES));
+  const [dateFilter, setDateFilter] = useState<"all" | "week" | "month">("all");
+  const [granularity, setGranularity] = useState<"daily" | "weekly" | "monthly">("weekly");
+  const [tip, setTip] = useState<{ xi: number; key: string; values: { va: string; count: number; color: string }[] } | null>(null);
+
+  function wkStart(d: Date): string {
+    const day = d.getDay(), diff = day === 0 ? -6 : 1 - day;
+    const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
+    return toYMD(mon);
+  }
+  function pkLabel(key: string): string {
+    if (granularity === "monthly") {
+      const [y, m] = key.split("-");
+      return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+    }
+    const d = new Date(key + "T12:00:00");
+    if (granularity === "weekly") return `Wk ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  const { periods, series } = useMemo(() => {
+    const now = new Date();
+    let src = rows;
+    if (dateFilter === "week") {
+      const cut = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+      src = rows.filter(r => { const d = parseRowDate(r["Date"]); return d ? d >= cut : false; });
+    } else if (dateFilter === "month") {
+      const cut = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+      src = rows.filter(r => { const d = parseRowDate(r["Date"]); return d ? d >= cut : false; });
+    }
+    const pk = (d: Date) => {
+      if (granularity === "daily") return toYMD(d);
+      if (granularity === "weekly") return wkStart(d);
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    };
+    const periodSet = new Set<string>();
+    const counts: Record<string, Record<string, number>> = {};
+    for (const r of src) {
+      const d = parseRowDate(r["Date"]);
+      if (!d) continue;
+      const va = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
+      if (!activeVAs.has(va)) continue;
+      const key = pk(d);
+      periodSet.add(key);
+      if (!counts[key]) counts[key] = {};
+      counts[key][va] = (counts[key][va] ?? 0) + 1;
+    }
+    const periods = [...periodSet].sort();
+    const series = ALL_VA_NAMES.filter(v => activeVAs.has(v)).map(va => ({
+      va, color: vaColor(va),
+      data: periods.map(p => counts[p]?.[va] ?? 0),
+    }));
+    return { periods, series };
+  }, [rows, activeVAs, dateFilter, granularity]);
+
+  const toggleVA = (va: string) => setActiveVAs(prev => {
+    const n = new Set(prev);
+    if (n.has(va)) { if (n.size > 1) n.delete(va); } else n.add(va);
+    return n;
+  });
+
+  const W = 560, H = 180, PT = 16, PR = 12, PB = 32, PL = 36;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const maxV = Math.max(...series.flatMap(s => s.data), 1);
+  const n = periods.length;
+  const xOf = (i: number) => PL + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
+  const yOf = (v: number) => PT + cH - (v / maxV) * cH;
+  const every = n > 24 ? Math.ceil(n / 8) : n > 12 ? 2 : 1;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="flex flex-wrap gap-1.5 flex-1 min-w-0">
+          {ALL_VA_NAMES.map(va => {
+            const c = vaColor(va);
+            const on = activeVAs.has(va);
+            return (
+              <button key={va} onClick={() => toggleVA(va)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${on ? "bg-white shadow-sm border-2" : "bg-slate-50 border border-slate-200 text-slate-400"}`}
+                style={on ? { borderColor: c, color: c } : {}}>
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: on ? c : "#cbd5e1" }} />
+                {va.split(" ")[0]}
+                {INACTIVE_VAS.has(va) && <span className="opacity-50 text-[9px]">&nbsp;(inactive)</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+            {(["all", "week", "month"] as const).map(f => (
+              <button key={f} onClick={() => setDateFilter(f)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${dateFilter === f ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+                {f === "all" ? "All dates" : f === "week" ? "Week" : "Month"}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
+            {(["daily", "weekly", "monthly"] as const).map(g => (
+              <button key={g} onClick={() => setGranularity(g)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${granularity === g ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+                {g.charAt(0).toUpperCase() + g.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {n === 0 ? (
+        <div className="h-44 flex items-center justify-center text-slate-300 text-sm">No data for this selection</div>
+      ) : (
+        <div className="relative select-none">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
+            {[0, 0.25, 0.5, 0.75, 1].map(v => {
+              const y = yOf(maxV * v);
+              return <g key={v}>
+                <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
+                <text x={PL - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxV * v)}</text>
+              </g>;
+            })}
+            {series.map(s => {
+              const poly = s.data.map((v, i) => `${xOf(i)},${yOf(v)}`).join(" ");
+              return <polyline key={s.va} points={poly} fill="none" stroke={s.color}
+                strokeWidth={INACTIVE_VAS.has(s.va) ? 1.5 : 2.5}
+                strokeOpacity={INACTIVE_VAS.has(s.va) ? 0.45 : 1}
+                strokeLinejoin="round" strokeLinecap="round" />;
+            })}
+            {periods.map((p, i) => {
+              if (i % every !== 0 && i !== n - 1) return null;
+              return <text key={p} x={xOf(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="#94a3b8">{pkLabel(p)}</text>;
+            })}
+            {periods.map((_, i) => {
+              const x = xOf(i);
+              const bw = n > 1 ? cW / (n - 1) : cW;
+              return <rect key={i} x={x - bw / 2} y={PT} width={bw} height={cH} fill="transparent"
+                onMouseEnter={() => setTip({
+                  xi: x, key: periods[i],
+                  values: series.map(s => ({ va: s.va, count: s.data[i], color: s.color })).sort((a, b) => b.count - a.count),
+                })}
+                onMouseLeave={() => setTip(null)} />;
+            })}
+            {tip && series.map(s => {
+              const i = periods.indexOf(tip.key);
+              if (i < 0) return null;
+              return <circle key={s.va} cx={xOf(i)} cy={yOf(s.data[i])} r="3.5" fill={s.color} stroke="white" strokeWidth="2" />;
+            })}
+          </svg>
+          {tip && (
+            <div className="absolute pointer-events-none bg-slate-800 text-white text-xs px-3 py-2 rounded-xl shadow-xl z-10 min-w-[140px]"
+              style={{ left: `${(tip.xi / W) * 100}%`, bottom: "30px", transform: "translateX(-50%)" }}>
+              <div className="font-semibold text-slate-400 mb-1.5 text-[10px] uppercase tracking-wide">{pkLabel(tip.key)}</div>
+              {tip.values.map(v => (
+                <div key={v.va} className="flex items-center justify-between gap-4">
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: v.color }} />
+                    {v.va.split(" ")[0]}
+                  </span>
+                  <span className="font-bold tabular-nums">{v.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-4 pt-1.5 border-t border-slate-100">
+        {series.map(s => (
+          <span key={s.va} className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span className="w-6 h-0.5 inline-block rounded-full" style={{ background: s.color }} />
+            {s.va}
+            {INACTIVE_VAS.has(s.va) && <span className="text-[9px] text-slate-400">&nbsp;(inactive)</span>}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Live & Accurate grouped bar chart ─────────────────────────────────────────
+function LiveAccurateChart({ rows }: { rows: Row[] }) {
+  const vaNames = Object.keys(VA_COLORS);
+  const stats = useMemo(() => {
+    return vaNames.map(va => {
+      const vaRows = rows.filter(r => (r["VA Name"]?.trim() || r["_sourceSheet"]?.trim()) === va);
+      const total = vaRows.length;
+      const live = vaRows.filter(r => /live/i.test(r["Handoff Notes"] ?? "")).length;
+      const passed = vaRows.filter(r => /live/i.test(r["Handoff Notes"] ?? "") && !!r["SLF Listing ID"]?.trim()).length;
+      return { va, total, live, passed, livePct: total ? Math.round((live / total) * 100) : 0, passedPct: total ? Math.round((passed / total) * 100) : 0 };
+    }).filter(s => s.total > 0);
+  }, [rows]);
+
+  if (!stats.length) return <div className="h-44 flex items-center justify-center text-slate-300 text-sm">No data</div>;
+
+  const W = 560, H = 210, PT = 24, PR = 12, PB = 36, PL = 40;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const maxV = Math.max(...stats.map(s => s.total), 1);
+  const groupW = cW / stats.length;
+  const barW = Math.min(groupW * 0.22, 22);
+  const gap = 2;
+  const yOf = (v: number) => PT + cH - (v / maxV) * cH;
+
+  return (
+    <div className="space-y-3">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
+        {[0, 0.25, 0.5, 0.75, 1].map(v => {
+          const y = yOf(maxV * v);
+          return <g key={v}>
+            <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
+            <text x={PL - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxV * v)}</text>
+          </g>;
+        })}
+        {stats.map((s, i) => {
+          const cx = PL + groupW * (i + 0.5);
+          const totalGroupW = 3 * barW + 2 * gap;
+          const lx = cx - totalGroupW / 2;
+          const x1 = lx, x2 = lx + barW + gap, x3 = lx + 2 * (barW + gap);
+          const totalH = (s.total / maxV) * cH;
+          const liveH = (s.live / maxV) * cH;
+          const passedH = (s.passed / maxV) * cH;
+          return (
+            <g key={s.va}>
+              <rect x={x1} y={yOf(s.total)} width={barW} height={totalH} fill="#e2e8f0" rx="2" />
+              <rect x={x2} y={yOf(s.live)} width={barW} height={liveH} fill="#16a34a" rx="2" />
+              {s.livePct > 0 && <text x={x2 + barW / 2} y={yOf(s.live) - 3} textAnchor="middle" fontSize="8" fontWeight="700" fill="#16a34a">{s.livePct}%</text>}
+              <rect x={x3} y={yOf(s.passed)} width={barW} height={passedH} fill="#2563eb" rx="2" />
+              {s.passedPct > 0 && <text x={x3 + barW / 2} y={yOf(s.passed) - 3} textAnchor="middle" fontSize="8" fontWeight="700" fill="#2563eb">{s.passedPct}%</text>}
+              <text x={cx} y={H - PB + 14} textAnchor="middle" fontSize="9" fill={INACTIVE_VAS.has(s.va) ? "#94a3b8" : "#64748b"} fontWeight="500">{s.va.split(" ")[0]}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex flex-wrap items-center gap-5 pt-1.5 border-t border-slate-100">
+        {[{ color: "#e2e8f0", label: "Total" }, { color: "#16a34a", label: "Live" }, { color: "#2563eb", label: "Passed (accurate)" }].map(l => (
+          <span key={l.label} className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span className="w-3 h-3 rounded-sm flex-shrink-0 inline-block" style={{ background: l.color }} />
+            {l.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── VA Scoreboard ─────────────────────────────────────────────────────────────
 function VAScoreboard({ rows }: { rows: Row[] }) {
   const RANK_BADGE = ["🥇", "🥈", "🥉"];
@@ -820,15 +1063,20 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                   <VAScoreboard rows={filteredRows} />
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                  <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    <div className="mb-4"><h2 className="font-bold text-slate-800">Daily Activity Trend</h2><p className="text-xs text-slate-400 mt-0.5">{dateLabel}</p></div>
-                    {filteredRows.length > 0 ? <TrendChart rows={filteredRows} range={dateRange}/> : <div className="h-36 flex items-center justify-center text-slate-300 text-sm">No data</div>}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="mb-4">
+                    <h2 className="font-bold text-slate-800">Listings per day — VA comparison</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Independent date controls · toggle VAs to compare</p>
                   </div>
-                  <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                    <div className="mb-4"><h2 className="font-bold text-slate-800">Entries by VA</h2><p className="text-xs text-slate-400 mt-0.5">{dateLabel}</p></div>
-                    {vaStats.length > 0 ? <VABarChart stats={vaStats}/> : <div className="text-slate-300 text-sm text-center py-8">No data</div>}
+                  <VAComparisonChart rows={rows} />
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="mb-4">
+                    <h2 className="font-bold text-slate-800">Accurate &amp; LIVE listings</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Live = "Live" in Handoff Notes · Accurate = has SLF Listing ID · {dateLabel}</p>
                   </div>
+                  <LiveAccurateChart rows={filteredRows} />
                 </div>
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-5 py-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">Detailed Breakdown</h2></div>
