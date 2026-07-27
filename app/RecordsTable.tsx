@@ -40,6 +40,13 @@ const COLUMNS: Col[] = [
 const PAGE_SIZES = [50, 100, 250, 1000];
 /** Columns with few enough distinct values get a dropdown instead of a text box. */
 const SELECT_MAX = 25;
+/** Sentinel filter value meaning "only rows where this column is blank".
+ *  Must survive HTML attribute serialisation: a NUL here is silently
+ *  rewritten to U+FFFD inside <option value>, so the value read back never
+ *  matched and the dropdown's "(Empty)" option quietly did nothing.
+ *  U+E000 is Private Use Area: it round-trips intact and never occurs in
+ *  scraped Facebook data. */
+const EMPTY = "\ue000EMPTY";
 
 function Icon({ d, cls = "w-3.5 h-3.5" }: { d: React.ReactNode; cls?: string }) {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -66,14 +73,22 @@ export default function RecordsTable({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(100);
 
-  // Distinct values per column decide dropdown-vs-text, and populate the dropdown.
-  const distinct = useMemo(() => {
-    const m: Record<string, string[]> = {};
+  // Per column: the dropdown options (when few enough distinct values) and
+  // whether any row leaves it blank. The scan never breaks early — a blank can
+  // appear after the distinct cap is hit, and missing it would hide the
+  // "(Empty)" filter on a column that needs it.
+  const meta = useMemo(() => {
+    const m: Record<string, { values?: string[]; hasBlank: boolean }> = {};
     for (const c of COLUMNS) {
-      if (c.type === "url" || c.type === "num" || c.key === "Date") continue;
+      const freeText = c.type === "url" || c.type === "num" || c.key === "Date";
       const s = new Set<string>();
-      for (const r of rows) { const v = (r[c.key] ?? "").trim(); if (v) { s.add(v); if (s.size > SELECT_MAX) break; } }
-      if (s.size <= SELECT_MAX) m[c.key] = [...s].sort((a, b) => a.localeCompare(b));
+      let hasBlank = false, over = freeText;
+      for (const r of rows) {
+        const v = (r[c.key] ?? "").trim();
+        if (!v) { hasBlank = true; continue; }
+        if (!over) { s.add(v); if (s.size > SELECT_MAX) over = true; }
+      }
+      m[c.key] = { values: over ? undefined : [...s].sort((a, b) => a.localeCompare(b)), hasBlank };
     }
     return m;
   }, [rows]);
@@ -86,12 +101,13 @@ export default function RecordsTable({
       if (q && !Object.entries(r).some(([k, v]) => !k.startsWith("_") && v?.toLowerCase().includes(q))) return false;
       for (const [k, v] of active) {
         const cell = (r[k] ?? "").trim();
+        if (v === EMPTY) { if (cell) return false; continue; }
         // Dropdown columns match exactly; free-text columns match on substring.
-        if (distinct[k] ? cell !== v : !cell.toLowerCase().includes(v.toLowerCase())) return false;
+        if (meta[k]?.values ? cell !== v : !cell.toLowerCase().includes(v.toLowerCase())) return false;
       }
       return true;
     });
-  }, [rows, search, colF, showIssuesOnly, glitchMap, distinct]);
+  }, [rows, search, colF, showIssuesOnly, glitchMap, meta]);
 
   const sorted = useMemo(() => {
     const col = COLUMNS.find(c => c.key === sort.key);
@@ -223,16 +239,32 @@ export default function RecordsTable({
                   <th className="sticky left-0 z-40 bg-white border-b border-r border-slate-200 px-2" style={{ top: 36 }} />
                   {COLUMNS.map(c => (
                     <th key={c.key} className="sticky z-30 bg-white border-b border-slate-200 px-1.5" style={{ top: 36 }}>
-                      {distinct[c.key] ? (
+                      {meta[c.key]?.values ? (
                         <select value={colF[c.key] ?? ""} onChange={e => setColF(f => ({ ...f, [c.key]: e.target.value }))}
                           className={`w-full text-[11px] font-normal rounded-md border px-1.5 py-1 focus:outline-none cursor-pointer ${colF[c.key] ? "border-green-400 bg-green-50 text-green-800" : "border-slate-200 text-slate-500"}`}>
                           <option value="">All</option>
-                          {distinct[c.key].map(v => <option key={v} value={v}>{v}</option>)}
+                          {meta[c.key].hasBlank && <option value={EMPTY}>(Empty)</option>}
+                          {meta[c.key].values!.map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
                       ) : (
-                        <input value={colF[c.key] ?? ""} onChange={e => setColF(f => ({ ...f, [c.key]: e.target.value }))}
-                          placeholder="Filter…"
-                          className={`w-full text-[11px] font-normal rounded-md border px-1.5 py-1 focus:outline-none ${colF[c.key] ? "border-green-400 bg-green-50" : "border-slate-200"}`} />
+                        // Free-text columns can't express "blank" by typing, so
+                        // they get a dedicated toggle pinned inside the input.
+                        <div className="relative">
+                          <input
+                            value={colF[c.key] === EMPTY ? "" : (colF[c.key] ?? "")}
+                            disabled={colF[c.key] === EMPTY}
+                            onChange={e => setColF(f => ({ ...f, [c.key]: e.target.value }))}
+                            placeholder={colF[c.key] === EMPTY ? "(empty only)" : "Filter…"}
+                            className={`w-full text-[11px] font-normal rounded-md border py-1 pl-1.5 focus:outline-none disabled:bg-green-50 disabled:text-green-800 disabled:placeholder:text-green-700 ${meta[c.key]?.hasBlank ? "pr-6" : "pr-1.5"} ${colF[c.key] ? "border-green-400 bg-green-50" : "border-slate-200"}`} />
+                          {meta[c.key]?.hasBlank && (
+                            <button
+                              onClick={() => setColF(f => ({ ...f, [c.key]: f[c.key] === EMPTY ? "" : EMPTY }))}
+                              title={colF[c.key] === EMPTY ? "Show all rows" : "Show only rows where this column is empty"}
+                              className={`absolute right-0.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded flex items-center justify-center text-[13px] leading-none transition-colors ${colF[c.key] === EMPTY ? "bg-green-600 text-white" : "text-slate-300 hover:text-slate-600 hover:bg-slate-100"}`}>
+                              &#8709;
+                            </button>
+                          )}
+                        </div>
                       )}
                     </th>
                   ))}
