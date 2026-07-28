@@ -7,6 +7,20 @@ import { exportCSV } from "@/lib/csv";
 type QAStatus = "Pass" | "Fail" | "Duplicate" | "Pending" | "";
 const DECISIONS = ["Pass", "Fail", "Duplicate"] as const;
 
+/** Suggestions for the QA notes box. It stays a free-text field — these are
+ *  offered via <datalist>, so a reviewer can pick one or type their own. */
+const NOTE_PRESETS = [
+  "Looks good",
+  "Wrong Facebook group",
+  "Duplicate listing",
+  "Listing ID missing",
+  "Listing not live",
+  "Wrong facility name",
+  "Media not uploaded",
+  "Comment not posted",
+  "Needs re-check",
+];
+
 const STATUS_STYLE: Record<string, string> = {
   Pass: "bg-green-100 text-green-700 border-green-300",
   Fail: "bg-red-100 text-red-700 border-red-300",
@@ -35,6 +49,8 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(100);
+  // Set when the API reports the checkmark columns don't exist yet.
+  const [checksUnsupported, setChecksUnsupported] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -85,8 +101,19 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
     [visible, safePage, pageSize]);
   useEffect(() => { setPage(0); }, [search, vaFilter, statusFilter, pageSize]);
 
-  async function save(r: Row, status: QAStatus) {
+  /** Upsert the whole review, overriding only the fields in `patch`. Every
+   *  control on the row funnels through here so one field never clears another. */
+  async function save(r: Row, patch: Partial<{
+    status: QAStatus; notes: string; groupChecked: boolean; listingChecked: boolean;
+  }>) {
     const k = rowKey(r);
+    const cur = reviews[k] ?? {};
+    const next = {
+      status: (patch.status ?? cur["QA Status"] ?? "Pending") as QAStatus,
+      notes: patch.notes ?? cur["QA Notes"] ?? "",
+      groupChecked: patch.groupChecked ?? cur["Group Checked"] === "1",
+      listingChecked: patch.listingChecked ?? cur["Listing Checked"] === "1",
+    };
     setSaving(k);
     const d = parseRowDate(r["Date"]);
     try {
@@ -97,21 +124,55 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
           date: d ? d.toLocaleDateString("en-US") : r["Date"],
           url: r["Direct Facebook Post URL"] || undefined,
           facilityName: r["Facility Name"] || undefined,
-          status, notes: "",
+          ...next,
         }),
       });
       if (res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (body?.checksPersisted === false) setChecksUnsupported(true);
         setReviews(p => ({
           ...p,
-          [k]: { ...p[k], "QA Status": status, "Row Key": k, ...(body?.reviewedBy ? { "Reviewed By": body.reviewedBy } : {}) },
+          [k]: {
+            ...p[k], "Row Key": k,
+            "QA Status": next.status,
+            "QA Notes": next.notes,
+            "Group Checked": next.groupChecked ? "1" : "",
+            "Listing Checked": next.listingChecked ? "1" : "",
+            ...(body?.reviewedBy ? { "Reviewed By": body.reviewedBy } : {}),
+          },
         }));
       }
     } finally { setSaving(null); }
   }
 
+  /** Small square check toggle used on the Group and Listing ID columns. */
+  function CheckMark({ on, busy, onClick, label }: { on: boolean; busy: boolean; onClick: () => void; label: string }) {
+    return (
+      <button onClick={onClick} disabled={busy} title={on ? `${label}: verified — click to clear` : `Mark ${label} as verified`}
+        aria-pressed={on}
+        className={`w-5 h-5 rounded flex-shrink-0 border flex items-center justify-center transition-all disabled:opacity-40 ${on ? "bg-green-600 border-green-600 text-white" : "bg-white border-slate-300 text-transparent hover:border-green-400 hover:text-green-300"}`}>
+        <Icon d={<polyline points="20 6 9 17 4 12" />} cls="w-3 h-3" />
+      </button>
+    );
+  }
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
+      {/* Shared suggestion list for every row's QA note box. */}
+      <datalist id="qa-note-presets">
+        {NOTE_PRESETS.map(n => <option key={n} value={n} />)}
+      </datalist>
+
+      {checksUnsupported && (
+        <div className="flex-shrink-0 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+          <b>Checkmarks aren&apos;t saving yet.</b> The database is missing the
+          <code className="mx-1 px-1 py-0.5 rounded bg-amber-100 font-mono">group_checked</code>/
+          <code className="mx-1 px-1 py-0.5 rounded bg-amber-100 font-mono">listing_checked</code>
+          columns. Run <code className="mx-1 px-1 py-0.5 rounded bg-amber-100 font-mono">supabase/qa_reviews_add_checks.sql</code>
+          in the Supabase SQL editor. QA decisions and notes are saving normally.
+        </div>
+      )}
+
       {/* Stat tiles double as status filters */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 flex-shrink-0">
         {(["Pending", "Pass", "Fail", "Duplicate"] as const).map(s => (
@@ -169,16 +230,20 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
               <thead>
                 <tr className="h-9">
                   {[
-                    { l: "Date", w: 104 }, { l: "Facility", w: 210 }, { l: "Group / FB Post", w: 230 },
-                    { l: "VA", w: 140 }, { l: "Listing ID", w: 110 }, { l: "Status / Handoff Notes", w: 320 },
+                    // QA Notes has no fixed width: on a w-full table it absorbs
+                    // whatever space is left, so the layout adapts from a laptop
+                    // to a 27" instead of being tuned to one viewport.
+                    { l: "Date", w: 100 }, { l: "Facility", w: 180 }, { l: "Group / FB Post", w: 220 },
+                    { l: "VA", w: 120 }, { l: "Listing ID", w: 125 },
+                    { l: "QA Notes", w: undefined as number | undefined, min: 190 },
                   ].map(h => (
-                    <th key={h.l} style={{ width: h.w, minWidth: h.w }}
+                    <th key={h.l} style={{ width: h.w, minWidth: h.min ?? h.w }}
                       className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 px-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                       {h.l}
                     </th>
                   ))}
-                  <th style={{ width: 200, minWidth: 200 }}
-                    className="sticky top-0 right-0 z-30 bg-slate-50 border-b border-l border-slate-200 px-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <th style={{ width: 185, minWidth: 185 }}
+                    className="sticky top-0 right-0 z-30 bg-slate-50 border-b border-l border-slate-200 px-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                     QA Decision
                   </th>
                 </tr>
@@ -193,14 +258,10 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
                   const group = (r["Facebook Group Name"] ?? "").trim();
                   const postUrl = (r["Direct Facebook Post URL"] ?? "").trim();
                   const va = (r["VA Name"] ?? "").trim();
-                  // These two fields very often hold the same text ("Live"),
-                  // so collapse duplicates rather than printing it twice.
-                  const notes = [...new Map(
-                    [r["Handoff Notes"], r["Status / Notes"]]
-                      .map(s => (s ?? "").trim()).filter(Boolean)
-                      .map(s => [s.toLowerCase(), s])
-                  ).values()];
-                  const reviewedBy = reviews[k]?.["Reviewed By"];
+                  const review = reviews[k];
+                  const reviewedBy = review?.["Reviewed By"];
+                  const groupOk = review?.["Group Checked"] === "1";
+                  const listingOk = review?.["Listing Checked"] === "1";
                   // Opaque background is required: the QA Decision cell is pinned.
                   const bg = status === "Pass" ? "bg-green-50/60" : status === "Fail" ? "bg-red-50/60"
                     : status === "Duplicate" ? "bg-purple-50/60" : "bg-white";
@@ -213,13 +274,19 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
                         <span className="line-clamp-2" title={r["Facility Name"]}>{r["Facility Name"]?.trim() || <span className="text-slate-300 font-normal">—</span>}</span>
                       </td>
                       <td className="border-b border-slate-100 px-4 py-3 align-top">
-                        <span className="text-slate-600 line-clamp-2" title={group}>{group || <span className="text-slate-300">—</span>}</span>
-                        {postUrl && (
-                          <a href={postUrl} target="_blank" rel="noreferrer"
-                            className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-green-600 hover:underline">
-                            <Icon d={ExternalIcon} cls="w-3 h-3" /> View FB post
-                          </a>
-                        )}
+                        <div className="flex items-start gap-2">
+                          <CheckMark on={groupOk} busy={busy} label="Group / FB post"
+                            onClick={() => save(r, { groupChecked: !groupOk })} />
+                          <div className="min-w-0">
+                            <span className="text-slate-600 line-clamp-2" title={group}>{group || <span className="text-slate-300">—</span>}</span>
+                            {postUrl && (
+                              <a href={postUrl} target="_blank" rel="noreferrer"
+                                className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-green-600 hover:underline">
+                                <Icon d={ExternalIcon} cls="w-3 h-3" /> View FB post
+                              </a>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="border-b border-slate-100 px-4 py-3 align-top whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
@@ -228,22 +295,37 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
                         </span>
                       </td>
                       <td className="border-b border-slate-100 px-4 py-3 align-top whitespace-nowrap">
-                        {listingId ? (
-                          <a href={wpEditUrl(listingId)} target="_blank" rel="noreferrer"
-                            title="Open in WordPress admin"
-                            className="inline-flex items-center gap-1 font-semibold text-green-600 hover:underline tabular-nums">
-                            {listingId}<Icon d={ExternalIcon} cls="w-3 h-3" />
-                          </a>
-                        ) : <span className="text-slate-300">—</span>}
+                        <div className="flex items-center gap-2">
+                          <CheckMark on={listingOk} busy={busy} label="Listing ID"
+                            onClick={() => save(r, { listingChecked: !listingOk })} />
+                          {listingId ? (
+                            <a href={wpEditUrl(listingId)} target="_blank" rel="noreferrer"
+                              title="Open in WordPress admin"
+                              className="inline-flex items-center gap-1 font-semibold text-green-600 hover:underline tabular-nums">
+                              {listingId}<Icon d={ExternalIcon} cls="w-3 h-3" />
+                            </a>
+                          ) : <span className="text-slate-300">—</span>}
+                        </div>
                       </td>
-                      <td className="border-b border-slate-100 px-4 py-3 align-top text-slate-600">
-                        {notes.length === 0 ? <span className="text-slate-300">—</span>
-                          : notes.map((n, i) => <p key={i} className="whitespace-pre-wrap break-words leading-snug">{n}</p>)}
+                      <td className="border-b border-slate-100 px-3 py-2.5 align-top">
+                        {/* Free-text field with suggestions: pick a preset from the
+                            dropdown or type anything. Saves on blur / Enter. */}
+                        <input
+                          list="qa-note-presets"
+                          defaultValue={review?.["QA Notes"] ?? ""}
+                          disabled={busy}
+                          placeholder="Add QA note…"
+                          onBlur={e => {
+                            const v = e.target.value.trim();
+                            if (v !== (review?.["QA Notes"] ?? "")) save(r, { notes: v });
+                          }}
+                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          className="w-full text-xs rounded-lg border border-slate-200 px-2 py-1.5 bg-white focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 disabled:opacity-50" />
                       </td>
-                      <td className={`sticky right-0 z-10 ${bg} border-b border-l border-slate-100 px-4 py-3 align-top`}>
+                      <td className={`sticky right-0 z-10 ${bg} border-b border-l border-slate-100 px-3 py-3 align-top`}>
                         <div className="flex items-center gap-1">
                           {DECISIONS.map(s => (
-                            <button key={s} disabled={busy} onClick={() => save(r, status === s ? "Pending" : s)}
+                            <button key={s} disabled={busy} onClick={() => save(r, { status: status === s ? "Pending" : s })}
                               className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all disabled:opacity-40 ${status === s ? STATUS_STYLE[s] : "bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300"}`}>
                               {busy && status === s ? "…" : s}
                             </button>
