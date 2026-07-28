@@ -105,5 +105,20 @@ export const GLITCH_ACCENT: Record<string, string> = {
   duplicate_listing_id: "#a855f7",
 };
 
+/** Stable identity for a row across reloads — QA reviews are keyed by this. */
+export function rowKey(r: Row): string {
+  const url = (r["Direct Facebook Post URL"] ?? "").trim().toLowerCase();
+  return [
+    (r["Date"] ?? "").trim(),
+    (r["VA Name"] ?? "").trim().toLowerCase(),
+    url || (r["Facility Name"] ?? "").trim().toLowerCase(),
+  ].join("||");
+}
+
+/** Deep link to a listing's WordPress edit screen. */
+export function wpEditUrl(listingId: string) {
+  return `https://soberlivingfinder.com/wp-admin/post.php?post=${encodeURIComponent(listingId.trim())}&action=edit`;
+}
+
 export function fmtNum(n: number) { return n.toLocaleString(); }
 export function pct(part: number, whole: number) { return whole ? Math.round((part / whole) * 100) : 0; }

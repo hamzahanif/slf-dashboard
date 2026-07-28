@@ -69,7 +69,9 @@ export async function POST(req: NextRequest) {
 
     if (error) throw new Error(error.message);
 
-    return NextResponse.json({ ok: true });
+    // Echo back what was stored so the client can show the reviewer
+    // immediately instead of only after a reload.
+    return NextResponse.json({ ok: true, reviewedBy: user.name, reviewDate: today });
   } catch (err) {
     console.error("[qa-review]", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
