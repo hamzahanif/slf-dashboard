@@ -157,7 +157,10 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3">
+    // Capped width. Without this there is ~1500px of slack on a 27" monitor,
+    // and whichever column is flexible swallows all of it. Capping keeps every
+    // column at a sensible size instead of trading one bloated column for another.
+    <div className="h-full min-h-0 flex flex-col gap-3 w-full max-w-[1600px]">
       {/* Shared suggestion list for every row's QA note box. */}
       <datalist id="qa-note-presets">
         {NOTE_PRESETS.map(n => <option key={n} value={n} />)}
@@ -230,15 +233,16 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
               <thead>
                 <tr className="h-9">
                   {[
-                    // Facility and Group are left flexible (min only) so spare width
-                    // on a big monitor goes to the long names that would otherwise
-                    // truncate. Everything else is fixed — notably QA Notes, which
-                    // stretched to ~1300px when it was the flexible one.
+                    // Every column gets an explicit width so the split is deliberate.
+                    // Leaving any of them to size themselves lets the longest text
+                    // win the space, which is how Group/FB ended up at 455px while
+                    // the notes box got 187. Mins let them shrink on a laptop.
                     { l: "Date", w: 100 },
-                    { l: "Facility", w: undefined as number | undefined, min: 150 },
-                    { l: "Group / FB Post", w: undefined as number | undefined, min: 175 },
-                    { l: "VA", w: 110 }, { l: "Listing ID", w: 118 },
-                    { l: "QA Notes", w: 230, min: 150 },
+                    { l: "Facility", w: 300, min: 150 },
+                    { l: "Group / FB Post", w: 310, min: 170 },
+                    { l: "Listing ID", w: 118 },
+                    { l: "QA Notes", w: 330, min: 170 },
+                    { l: "VA", w: 130 },
                   ].map(h => (
                     <th key={h.l} style={{ width: h.w, minWidth: h.min ?? h.w }}
                       className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 px-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -292,12 +296,6 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
                         </div>
                       </td>
                       <td className="border-b border-slate-100 px-4 py-3 align-top whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                          <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: vaColor(va) }} />
-                          {va || "—"}
-                        </span>
-                      </td>
-                      <td className="border-b border-slate-100 px-4 py-3 align-top whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <CheckMark on={listingOk} busy={busy} label="Listing ID"
                             onClick={() => save(r, { listingChecked: !listingOk })} />
@@ -324,6 +322,12 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
                           }}
                           onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                           className="w-full text-xs rounded-lg border border-slate-200 px-2 py-1.5 bg-white focus:outline-none focus:border-green-400 focus:ring-2 focus:ring-green-100 disabled:opacity-50" />
+                      </td>
+                      <td className="border-b border-slate-100 px-4 py-3 align-top whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                          <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: vaColor(va) }} />
+                          {va || "—"}
+                        </span>
                       </td>
                       <td className={`sticky right-0 z-10 ${bg} border-b border-l border-slate-100 px-3 py-3 align-top`}>
                         <div className="flex items-center gap-1">
