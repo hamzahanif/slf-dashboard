@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { parseRowDate, toYMD } from "@/lib/dash";
 
 const SHIFTS = ["Morning", "Afternoon", "Evening", "Night"];
 const MEDIA_OPTIONS = ["Photos", "Video", "None"];
@@ -18,8 +19,16 @@ const SELECT_FIELDS: Record<string, string[]> = {
   "Handoff Notes": HANDOFF_NOTES_OPTIONS,
 };
 const TEXTAREA_FIELDS = ["Promo Comment", "Status / Notes", "Handoff Notes"];
-const READONLY_FIELDS = ["VA Name", "Date"];
+const READONLY_FIELDS = ["VA Name"];
+/** Rendered as a date picker. Editable here, but locked on the Log Entry form. */
+const DATE_FIELDS = ["Date"];
 const HIDDEN_FIELDS = ["_id", "_sourceSheet"];
+
+/** Coerce whatever the row holds into the YYYY-MM-DD an <input type="date"> needs. */
+function toDateInput(v: string) {
+  const d = parseRowDate(v ?? "");
+  return d ? toYMD(d) : "";
+}
 
 interface Row {
   [key: string]: string;
@@ -39,7 +48,9 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
   useEffect(() => {
     const initial: Row = {};
     for (const [k, v] of Object.entries(row)) {
-      if (!HIDDEN_FIELDS.includes(k)) initial[k] = v ?? "";
+      if (HIDDEN_FIELDS.includes(k)) continue;
+      // Legacy rows can hold "Date(y,m,d)"; the picker needs YYYY-MM-DD.
+      initial[k] = DATE_FIELDS.includes(k) ? toDateInput(v) : (v ?? "");
     }
     setForm(initial);
   }, [row]);
@@ -50,6 +61,12 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
   }
 
   async function handleSave() {
+    // An empty date would be written as NULL, which the entries table rejects —
+    // and a row with no date drops out of every date-filtered view.
+    if (!form["Date"]?.trim()) {
+      setError("Date is required.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -110,6 +127,15 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
                 </div>
               );
             }
+            if (DATE_FIELDS.includes(field)) {
+              return (
+                <div key={field}>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">{field}</label>
+                  <input type="date" value={form[field] ?? ""} onChange={e => set(field, e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400" />
+                </div>
+              );
+            }
             if (isSelect) {
               return (
                 <div key={field}>
@@ -143,23 +169,24 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
             );
           })}
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-red-700 text-sm">
-              {error}
-            </div>
-          )}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 flex-shrink-0">
-          <button onClick={onClose}
-            className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 transition-colors">
-            Cancel
-          </button>
-          <button onClick={handleSave} disabled={saving}
-            className="bg-green-700 hover:bg-green-800 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-xl text-sm transition-colors">
-            {saving ? "Saving…" : "Save changes"}
-          </button>
+        {/* Errors live in the footer, not the scrolling body — otherwise a
+            validation message can render below the fold and look like nothing
+            happened when Save is clicked. */}
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center gap-3 flex-shrink-0">
+          {error && <p className="text-sm text-red-600 flex-1 min-w-0">{error}</p>}
+          <div className="ml-auto flex gap-3 flex-shrink-0">
+            <button onClick={onClose}
+              className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 transition-colors">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving}
+              className="bg-green-700 hover:bg-green-800 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-xl text-sm transition-colors">
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

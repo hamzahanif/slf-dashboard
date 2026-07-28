@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SessionPayload } from "@/lib/session";
+import { toYMD } from "@/lib/dash";
 
 const VA_NAMES = ["Mico Real", "Muhammad Salman", "Abdul Rehman", "Fazeela"];
 
@@ -12,8 +13,11 @@ const COMMENT_STATUS_OPTIONS = ["Pending", "Approved", "Rejected", "Live"];
 const ACTION_TYPE_OPTIONS = ["Comment", "Message", "Skip"];
 const HANDOFF_NOTES_OPTIONS = ["Live", "Not Live", "Pending", "Follow Up", "Other"];
 
+/** Today's LOCAL calendar date. Must not use toISOString(), which is UTC —
+ *  in UTC+5 that returns yesterday for anything logged before 05:00 local,
+ *  and with the date field locked a VA could not correct it. */
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toYMD(new Date());
 }
 
 interface Props {
@@ -106,7 +110,8 @@ export default function LogEntryForm({ user }: Props) {
       const data = await res.json();
       if (data.ok) {
         setResult({ ok: true });
-        // Reset transient fields, keep Date and VA
+        // Reset transient fields, keep Date and VA — a VA backfilling several
+        // entries for one day shouldn't have to re-pick the date every time.
         setForm(f => ({
           ...f,
           Shift: "",
@@ -150,6 +155,7 @@ export default function LogEntryForm({ user }: Props) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Date <span className="text-red-400">*</span></label>
+                {/* Defaults to today but is editable, so a VA can backfill. */}
                 <input type="date" value={form.Date}
                   onChange={e => set("Date", e.target.value)}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400"
