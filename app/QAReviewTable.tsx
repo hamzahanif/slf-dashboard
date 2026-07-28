@@ -230,12 +230,15 @@ export default function QAReviewTable({ rows, dateLabel }: { rows: Row[]; dateLa
               <thead>
                 <tr className="h-9">
                   {[
-                    // QA Notes has no fixed width: on a w-full table it absorbs
-                    // whatever space is left, so the layout adapts from a laptop
-                    // to a 27" instead of being tuned to one viewport.
-                    { l: "Date", w: 100 }, { l: "Facility", w: 180 }, { l: "Group / FB Post", w: 220 },
-                    { l: "VA", w: 120 }, { l: "Listing ID", w: 125 },
-                    { l: "QA Notes", w: undefined as number | undefined, min: 190 },
+                    // Facility and Group are left flexible (min only) so spare width
+                    // on a big monitor goes to the long names that would otherwise
+                    // truncate. Everything else is fixed — notably QA Notes, which
+                    // stretched to ~1300px when it was the flexible one.
+                    { l: "Date", w: 100 },
+                    { l: "Facility", w: undefined as number | undefined, min: 150 },
+                    { l: "Group / FB Post", w: undefined as number | undefined, min: 175 },
+                    { l: "VA", w: 110 }, { l: "Listing ID", w: 118 },
+                    { l: "QA Notes", w: 230, min: 150 },
                   ].map(h => (
                     <th key={h.l} style={{ width: h.w, minWidth: h.min ?? h.w }}
                       className="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 px-4 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">
