@@ -7,6 +7,8 @@ import {
   parseRowDate, toYMD, startOfWeek, addDays, daysBetween, wpHour,
   filterByRange, fmtNum, pct,
 } from "@/lib/dash";
+import type { ReportFilter } from "@/lib/report";
+import ExportReport from "./ExportReport";
 
 type Preset = "today" | "yesterday" | "7d" | "30d" | "month" | "alltime" | "custom";
 type Outcome = "all" | "live" | "notlive" | "nolisting" | "nowp";
@@ -599,7 +601,7 @@ function DataHealth({ rows }: { rows: Row[] }) {
 }
 
 // ── Main dashboard ────────────────────────────────────────────────────────────
-export default function DashboardHome({ rows }: { rows: Row[] }) {
+export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; userName?: string }) {
   const [preset, setPreset] = useState<Preset>("30d");
   const [cs, setCs] = useState(""); const [ce, setCe] = useState("");
   const [vaSel, setVaSel] = useState<Set<string>>(new Set());
@@ -746,6 +748,19 @@ export default function DashboardHome({ rows }: { rows: Row[] }) {
   const toggleVa = (va: string) => setVaSel(s => { const n = new Set(s); if (n.has(va)) n.delete(va); else n.add(va); return n; });
   const label = fmtRange(range, preset);
 
+  // Every active filter, described in words, so the exported report states the
+  // exact view it was produced from.
+  const reportFilters: ReportFilter[] = [
+    { label: "Period", value: label },
+    ...(vaSel.size ? [{ label: "VA", value: [...vaSel].join(", ") }] : []),
+    ...(shiftSel.size ? [{ label: "Shift", value: [...shiftSel].join(", ") }] : []),
+    ...(groupSel.size ? [{ label: "FB group", value: [...groupSel].join(", ") }] : []),
+    ...(actionSel.size ? [{ label: "Action", value: [...actionSel].join(", ") }] : []),
+    ...(outcome !== "all" ? [{ label: "Outcome", value: OUTCOMES.find(o => o.id === outcome)!.label }] : []),
+    ...(q.trim() ? [{ label: "Search", value: q.trim() }] : []),
+    { label: "Records", value: `${fmtNum(cur.length)} of ${fmtNum(rows.length)}` },
+  ];
+
   return (
     <div className="space-y-4">
       {/* ── Sticky filter bar ── */}
@@ -782,10 +797,13 @@ export default function DashboardHome({ rows }: { rows: Row[] }) {
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search all fields…"
               className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-none focus:border-green-400" />
           </div>
-          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] ml-auto">
-            <span className="text-slate-500">{label}</span><span className="text-slate-300">·</span>
-            <span className="font-bold text-slate-800 tabular-nums">{fmtNum(cur.length)}</span>
-            <span className="text-slate-400">of {fmtNum(rows.length)}</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px]">
+              <span className="text-slate-500">{label}</span><span className="text-slate-300">·</span>
+              <span className="font-bold text-slate-800 tabular-nums">{fmtNum(cur.length)}</span>
+              <span className="text-slate-400">of {fmtNum(rows.length)}</span>
+            </div>
+            <ExportReport rows={cur} title="Dashboard Report" filters={reportFilters} generatedBy={userName} />
           </div>
         </div>
         {activeChips.length > 0 && (

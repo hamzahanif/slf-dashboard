@@ -9,6 +9,7 @@ import EditRowModal from "./EditRowModal";
 import DashboardHome from "./DashboardHome";
 import RecordsTable from "./RecordsTable";
 import QAReviewTable from "./QAReviewTable";
+import ExportReport from "./ExportReport";
 import {
   Row, VA_COLORS, INACTIVE_VAS, ACTIVE_VA_COUNT, vaColor,
   parseRowDate, toYMD, startOfWeek, filterByRange,
@@ -953,17 +954,23 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
             <div className={FULL_HEIGHT_TABS.has(tab) ? "h-full min-h-0" : "space-y-5"}>
 
               {/* ── DASHBOARD ── */}
-              {tab === "dashboard" && <DashboardHome rows={rows}/>}
+              {tab === "dashboard" && <DashboardHome rows={rows} userName={user.name}/>}
 
               {/* ── PERFORMANCE ── */}
               {tab === "performance" && <>
                 {/* VA Scoreboard — top of performance tab */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                  <div className="mb-4 flex items-start justify-between">
+                  <div className="mb-4 flex items-start justify-between gap-3">
                     <div>
                       <h2 className="font-bold text-slate-800">VA Performance Comparison</h2>
                       <p className="text-xs text-slate-400 mt-0.5">Ranked by total entries · {dateLabel}</p>
                     </div>
+                    <ExportReport rows={filteredRows} title="VA Performance Report"
+                      generatedBy={user.name}
+                      filters={[
+                        { label: "Period", value: dateLabel },
+                        { label: "Records", value: `${filteredRows.length.toLocaleString()} of ${rows.length.toLocaleString()}` },
+                      ]}/>
                   </div>
                   <VAScoreboard rows={filteredRows} />
                 </div>
