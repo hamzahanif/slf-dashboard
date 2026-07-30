@@ -58,6 +58,7 @@ export default function LogEntryForm({ user }: Props) {
   const [result, setResult] = useState<{ ok?: boolean; error?: string } | null>(null);
   const [dupWarning, setDupWarning] = useState<string | null>(null);
   const [confirmedDup, setConfirmedDup] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   function set(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }));
@@ -89,6 +90,7 @@ export default function LogEntryForm({ user }: Props) {
     if (!form["Direct Facebook Post URL"]) { setResult({ error: "Direct Facebook Post URL is required." }); return; }
 
     if (dupWarning && !confirmedDup) { setResult({ error: "This URL already exists. Click 'Submit anyway' to confirm." }); return; }
+    setSessionExpired(false);   // clear any stale expiry banner on retry
     setSubmitting(true);
     setResult(null);
     try {
@@ -114,6 +116,14 @@ export default function LogEntryForm({ user }: Props) {
           "Status / Notes": form["Status / Notes"],
         }),
       });
+      // The session JWT lasts 12h. A tab left open past that gets a bare 401,
+      // which used to surface as "Not authenticated" with the entry lost. Keep
+      // the form filled and tell them exactly what to do instead.
+      if (res.status === 401) {
+        setSessionExpired(true);
+        setResult(null);
+        return;
+      }
       const data = await res.json();
       if (data.ok) {
         setResult({ ok: true });
@@ -351,6 +361,20 @@ export default function LogEntryForm({ user }: Props) {
           </div>
 
           {/* Status message */}
+          {sessionExpired && (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 text-amber-900 text-sm space-y-2">
+              <p className="font-semibold">Your sign-in expired — nothing was lost.</p>
+              <p>
+                Sessions last 12 hours and this tab has been open longer. Your entry is
+                still filled in below. Sign in again in a new tab, then come back and
+                press Submit.
+              </p>
+              <a href="/login" target="_blank" rel="noreferrer"
+                className="inline-block bg-amber-600 hover:bg-amber-700 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition-colors">
+                Open sign-in in a new tab
+              </a>
+            </div>
+          )}
           {result?.ok && (
             <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-green-700 text-sm font-medium">
               Entry submitted successfully — it&apos;s now in the Google Sheet.

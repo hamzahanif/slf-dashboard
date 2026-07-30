@@ -733,8 +733,14 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
   function loadData() {
     setLoading(true);
-    Promise.all([fetch("/api/data").then(r => r.json()), fetch("/api/rows").then(r => r.json())])
-      .then(([d, r]) => { setData(d); setRows(r.rows || []); })
+    Promise.all([fetch("/api/data"), fetch("/api/rows")])
+      .then(async ([dRes, rRes]) => {
+        // A tab left open past the 12h session TTL gets 401s here. Send them to
+        // sign in rather than rendering a raw "Not authenticated" error.
+        if (dRes.status === 401 || rRes.status === 401) { router.replace("/login"); return; }
+        const [d, r] = await Promise.all([dRes.json(), rRes.json()]);
+        setData(d); setRows(r.rows || []);
+      })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false));
   }
