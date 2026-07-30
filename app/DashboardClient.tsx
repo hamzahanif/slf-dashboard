@@ -288,11 +288,13 @@ function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean })
 }
 
 // ── VA Comparison Line Chart ──────────────────────────────────────────────────
+// `rows` must be the globally date-filtered set. This chart used to receive the
+// full unfiltered table and carry its own competing date filter, so the period
+// bar at the top of the page appeared to do nothing to it.
 function VAComparisonChart({ rows }: { rows: Row[] }) {
   const ALL_VA_NAMES = Object.keys(VA_COLORS);
   const [activeVAs, setActiveVAs] = useState<Set<string>>(new Set(ALL_VA_NAMES));
-  const [dateFilter, setDateFilter] = useState<"all" | "week" | "month">("all");
-  const [granularity, setGranularity] = useState<"daily" | "weekly" | "monthly">("weekly");
+  const [granMode, setGranMode] = useState<"auto" | "daily" | "weekly" | "monthly">("auto");
   const [tip, setTip] = useState<{ xi: number; key: string; values: { va: string; count: number; color: string }[] } | null>(null);
 
   function wkStart(d: Date): string {
@@ -310,16 +312,20 @@ function VAComparisonChart({ rows }: { rows: Row[] }) {
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
 
+  // Bucket size follows the span of whatever the global filter selected, so
+  // picking "Today" doesn't render a single weekly bucket.
+  const spanDays = useMemo(() => {
+    const ds = rows.map(r => parseRowDate(r["Date"])).filter(Boolean) as Date[];
+    if (ds.length < 2) return 1;
+    const lo = Math.min(...ds.map(d => +d)), hi = Math.max(...ds.map(d => +d));
+    return Math.round((hi - lo) / 86400000) + 1;
+  }, [rows]);
+  const autoGran: "daily" | "weekly" | "monthly" =
+    spanDays <= 45 ? "daily" : spanDays <= 200 ? "weekly" : "monthly";
+  const granularity = granMode === "auto" ? autoGran : granMode;
+
   const { periods, series } = useMemo(() => {
-    const now = new Date();
-    let src = rows;
-    if (dateFilter === "week") {
-      const cut = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
-      src = rows.filter(r => { const d = parseRowDate(r["Date"]); return d ? d >= cut : false; });
-    } else if (dateFilter === "month") {
-      const cut = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
-      src = rows.filter(r => { const d = parseRowDate(r["Date"]); return d ? d >= cut : false; });
-    }
+    const src = rows;
     const pk = (d: Date) => {
       if (granularity === "daily") return toYMD(d);
       if (granularity === "weekly") return wkStart(d);
@@ -343,7 +349,7 @@ function VAComparisonChart({ rows }: { rows: Row[] }) {
       data: periods.map(p => counts[p]?.[va] ?? 0),
     }));
     return { periods, series };
-  }, [rows, activeVAs, dateFilter, granularity]);
+  }, [rows, activeVAs, granularity]);
 
   const toggleVA = (va: string) => setActiveVAs(prev => {
     const n = new Set(prev);
@@ -378,19 +384,14 @@ function VAComparisonChart({ rows }: { rows: Row[] }) {
           })}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {/* No date buttons here — the page's period bar governs the range.
+              This only chooses how finely the range is bucketed. */}
           <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-            {(["all", "week", "month"] as const).map(f => (
-              <button key={f} onClick={() => setDateFilter(f)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${dateFilter === f ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                {f === "all" ? "All dates" : f === "week" ? "Week" : "Month"}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-            {(["daily", "weekly", "monthly"] as const).map(g => (
-              <button key={g} onClick={() => setGranularity(g)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${granularity === g ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                {g.charAt(0).toUpperCase() + g.slice(1)}
+            {(["auto", "daily", "weekly", "monthly"] as const).map(g => (
+              <button key={g} onClick={() => setGranMode(g)}
+                title={g === "auto" ? "Bucket size follows the selected period" : undefined}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${granMode === g ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+                {g === "auto" ? `Auto (${autoGran})` : g.charAt(0).toUpperCase() + g.slice(1)}
               </button>
             ))}
           </div>
@@ -970,9 +971,9 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                   <div className="mb-4">
                     <h2 className="font-bold text-slate-800">Listings per day — VA comparison</h2>
-                    <p className="text-xs text-slate-400 mt-0.5">Independent date controls · toggle VAs to compare</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Toggle VAs to compare · {dateLabel}</p>
                   </div>
-                  <VAComparisonChart rows={rows} />
+                  <VAComparisonChart rows={filteredRows} />
                 </div>
 
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
