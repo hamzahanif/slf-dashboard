@@ -105,6 +105,59 @@ export const GLITCH_ACCENT: Record<string, string> = {
   duplicate_listing_id: "#a855f7",
 };
 
+// ── Controlled vocabulary ─────────────────────────────────────────────────────
+// The single source of truth for every categorical column. The entry forms and
+// the edit modal both read this, so the options offered can never drift from
+// what is actually stored — which is how the DB ended up with 33 spellings of
+// Handoff Notes and a Media dropdown offering "Photos/Video/None" against
+// Yes/No data.
+//
+// `default` is the most-used value (share of 6,511 rows at time of writing),
+// pre-selected so logging an ordinary entry needs the fewest choices.
+export const VOCAB: Record<string, { options: string[]; default: string }> = {
+  "Action Type": {
+    options: ["New Listing", "Comment", "Duplicate", "Skipped"],
+    default: "New Listing",                       // 96%
+  },
+  "Media Uploaded": {
+    options: ["Yes", "No"],
+    default: "Yes",                               // 69%
+  },
+  "Comment Left (Script A)": {
+    options: ["Yes", "Yes - pending approval", "No", "Unable to post"],
+    default: "Yes",                               // 92%
+  },
+  "Promo Comment": {
+    options: ["No", "Yes"],
+    default: "No",                                // 98%
+  },
+  "Comment Status": {
+    options: ["Approved", "Pending"],
+    default: "",                                  // 97% blank — leave unset
+  },
+  "Handoff Notes": {
+    options: ["Live", "Pending approval", "Comments disabled", "Unable to post", "Declined", "Duplicate"],
+    default: "Live",                              // 73%
+  },
+  "Status / Notes": {
+    options: ["Passed", "Live", "Pending", "No comment", "Duplicate", "Retry from another account"],
+    default: "",                                  // 82% blank — leave unset
+  },
+  "Shift": {
+    options: ["Morning", "Afternoon", "Evening", "Night"],
+    default: "",                                  // resolved per VA below
+  },
+};
+
+/** Each VA works exactly one shift, so the form can pre-fill it from the name. */
+export const VA_SHIFT: Record<string, string> = {
+  "Mico Real": "Night",
+  "Muhammad Salman": "Morning",
+  "Abdul Rehman": "Afternoon",
+  "Fazeela": "Evening",
+  "Janine": "Evening",
+};
+
 /** Stable identity for a row across reloads — QA reviews are keyed by this. */
 export function rowKey(r: Row): string {
   const url = (r["Direct Facebook Post URL"] ?? "").trim().toLowerCase();

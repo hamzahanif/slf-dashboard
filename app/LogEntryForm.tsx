@@ -2,16 +2,21 @@
 
 import { useState } from "react";
 import type { SessionPayload } from "@/lib/session";
-import { toYMD } from "@/lib/dash";
+import { toYMD, VOCAB, VA_SHIFT } from "@/lib/dash";
 
 const VA_NAMES = ["Mico Real", "Muhammad Salman", "Abdul Rehman", "Fazeela"];
 
-const SHIFTS = ["Morning", "Afternoon", "Evening", "Night"];
-const MEDIA_OPTIONS = ["Photos", "Video", "None"];
-const COMMENT_LEFT_OPTIONS = ["Yes", "No"];
-const COMMENT_STATUS_OPTIONS = ["Pending", "Approved", "Rejected", "Live"];
-const ACTION_TYPE_OPTIONS = ["Comment", "Message", "Skip"];
-const HANDOFF_NOTES_OPTIONS = ["Live", "Not Live", "Pending", "Follow Up", "Other"];
+// Options come from the shared vocabulary so they can never drift from what is
+// actually stored. Previously this file hardcoded its own lists — Media offered
+// "Photos/Video/None" against Yes/No data, and Action offered "Comment/Message/
+// Skip" when 96% of rows are "New Listing".
+const SHIFTS = VOCAB["Shift"].options;
+const MEDIA_OPTIONS = VOCAB["Media Uploaded"].options;
+const COMMENT_LEFT_OPTIONS = VOCAB["Comment Left (Script A)"].options;
+const COMMENT_STATUS_OPTIONS = VOCAB["Comment Status"].options;
+const ACTION_TYPE_OPTIONS = VOCAB["Action Type"].options;
+const HANDOFF_NOTES_OPTIONS = VOCAB["Handoff Notes"].options;
+const STATUS_NOTES_OPTIONS = VOCAB["Status / Notes"].options;
 
 /** Today's LOCAL calendar date. Must not use toISOString(), which is UTC —
  *  in UTC+5 that returns yesterday for anything logged before 05:00 local,
@@ -28,23 +33,25 @@ export default function LogEntryForm({ user }: Props) {
   const isAdmin = user.role === "admin";
   const defaultVaName = isAdmin ? "" : (user.vaName ?? "");
 
+  // Pre-filled with the most common answer for each field, so a routine entry
+  // only needs the group / URL / facility / listing ID typed in.
   const [form, setForm] = useState({
     Date: today(),
     vaName: defaultVaName,
-    Shift: "",
+    Shift: VA_SHIFT[defaultVaName] ?? "",
     "Facebook Group Name": "",
     "Direct Facebook Post URL": "",
     "Facility Name": "",
     "SLF Listing ID": "",
-    "Media Uploaded": "",
-    "Comment Left (Script A)": "",
-    "Comment Status": "",
-    "Action Type": "",
-    "Promo Comment": "",
+    "Media Uploaded": VOCAB["Media Uploaded"].default,
+    "Comment Left (Script A)": VOCAB["Comment Left (Script A)"].default,
+    "Comment Status": VOCAB["Comment Status"].default,
+    "Action Type": VOCAB["Action Type"].default,
+    "Promo Comment": VOCAB["Promo Comment"].default,
     "WP Post Time": "",
     "FB Account": "",
-    "Handoff Notes": "",
-    "Status / Notes": "",
+    "Handoff Notes": VOCAB["Handoff Notes"].default,
+    "Status / Notes": VOCAB["Status / Notes"].default,
   });
 
   const [submitting, setSubmitting] = useState(false);
@@ -112,22 +119,25 @@ export default function LogEntryForm({ user }: Props) {
         setResult({ ok: true });
         // Reset transient fields, keep Date and VA — a VA backfilling several
         // entries for one day shouldn't have to re-pick the date every time.
+        // Clear only what changes per entry. Shift, FB account and every
+        // dropdown go back to their default rather than to blank, so logging a
+        // run of similar entries doesn't mean re-picking the same answers.
         setForm(f => ({
           ...f,
-          Shift: "",
+          Shift: f.Shift,
           "Facebook Group Name": "",
           "Direct Facebook Post URL": "",
           "Facility Name": "",
           "SLF Listing ID": "",
-          "Media Uploaded": "",
-          "Comment Left (Script A)": "",
-          "Comment Status": "",
-          "Action Type": "",
-          "Promo Comment": "",
+          "Media Uploaded": VOCAB["Media Uploaded"].default,
+          "Comment Left (Script A)": VOCAB["Comment Left (Script A)"].default,
+          "Comment Status": VOCAB["Comment Status"].default,
+          "Action Type": VOCAB["Action Type"].default,
+          "Promo Comment": VOCAB["Promo Comment"].default,
           "WP Post Time": "",
           "FB Account": f["FB Account"],
-          "Handoff Notes": "",
-          "Status / Notes": "",
+          "Handoff Notes": VOCAB["Handoff Notes"].default,
+          "Status / Notes": VOCAB["Status / Notes"].default,
         }));
       } else {
         setResult({ error: data.error ?? "Submission failed." });
@@ -165,7 +175,12 @@ export default function LogEntryForm({ user }: Props) {
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">VA Name <span className="text-red-400">*</span></label>
                 {isAdmin ? (
-                  <select value={form.vaName} onChange={e => set("vaName", e.target.value)}
+                  <select value={form.vaName}
+                    onChange={e => {
+                      // Each VA works one fixed shift, so fill it in for them.
+                      const va = e.target.value;
+                      setForm(f => ({ ...f, vaName: va, Shift: VA_SHIFT[va] ?? f.Shift }));
+                    }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white">
                     <option value="">Select VA…</option>
                     {VA_NAMES.map(v => <option key={v} value={v}>{v}</option>)}
@@ -300,12 +315,11 @@ export default function LogEntryForm({ user }: Props) {
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Promo Comment</label>
-              <textarea value={form["Promo Comment"]}
-                onChange={e => set("Promo Comment", e.target.value)}
-                rows={2}
-                placeholder="Paste the promo comment text if applicable"
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400 resize-none"
-              />
+              {/* Was a free-text box, but every row in the DB holds Yes or No. */}
+              <select value={form["Promo Comment"]} onChange={e => set("Promo Comment", e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white">
+                {VOCAB["Promo Comment"].options.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
             </div>
           </div>
 
@@ -323,11 +337,15 @@ export default function LogEntryForm({ user }: Props) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Status / Notes</label>
-                <input type="text" value={form["Status / Notes"]}
+                {/* Free text with suggestions: pick a standard value or type one. */}
+                <input type="text" list="status-notes-options" value={form["Status / Notes"]}
                   onChange={e => set("Status / Notes", e.target.value)}
-                  placeholder="Any additional notes"
+                  placeholder="Optional"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400"
                 />
+                <datalist id="status-notes-options">
+                  {STATUS_NOTES_OPTIONS.map(o => <option key={o} value={o} />)}
+                </datalist>
               </div>
             </div>
           </div>

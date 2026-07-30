@@ -1,24 +1,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { parseRowDate, toYMD } from "@/lib/dash";
+import { parseRowDate, toYMD, VOCAB } from "@/lib/dash";
 
-const SHIFTS = ["Morning", "Afternoon", "Evening", "Night"];
-const MEDIA_OPTIONS = ["Photos", "Video", "None"];
-const COMMENT_LEFT_OPTIONS = ["Yes", "No"];
-const COMMENT_STATUS_OPTIONS = ["Pending", "Approved", "Rejected", "Live"];
-const ACTION_TYPE_OPTIONS = ["Comment", "Message", "Skip"];
-const HANDOFF_NOTES_OPTIONS = ["Live", "Not Live", "Pending", "Follow Up", "Other"];
-
-const SELECT_FIELDS: Record<string, string[]> = {
-  Shift: SHIFTS,
-  "Media Uploaded": MEDIA_OPTIONS,
-  "Comment Left (Script A)": COMMENT_LEFT_OPTIONS,
-  "Comment Status": COMMENT_STATUS_OPTIONS,
-  "Action Type": ACTION_TYPE_OPTIONS,
-  "Handoff Notes": HANDOFF_NOTES_OPTIONS,
-};
-const TEXTAREA_FIELDS = ["Promo Comment", "Status / Notes", "Handoff Notes"];
+// Driven by the shared vocabulary so the edit modal, the log form and the
+// stored data can never disagree about what a column may contain.
+const SELECT_FIELDS: Record<string, string[]> = Object.fromEntries(
+  Object.entries(VOCAB)
+    .filter(([, v]) => v.options.length > 0)
+    .map(([field, v]) => [field, v.options])
+);
+const TEXTAREA_FIELDS: string[] = [];
 const READONLY_FIELDS = ["VA Name"];
 /** Rendered as a date picker. Editable here, but locked on the Log Entry form. */
 const DATE_FIELDS = ["Date"];
