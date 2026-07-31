@@ -210,9 +210,6 @@ export default function RecordsTable({
               <thead>
                 {/* Header row — sortable */}
                 <tr className="h-9">
-                  <th className="sticky top-0 left-0 z-40 bg-slate-50 border-b border-r border-slate-200 px-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider" style={{ width: 92, minWidth: 92 }}>
-                    Issues
-                  </th>
                   {COLUMNS.map(c => {
                     const on = sort.key === c.key;
                     return (
@@ -230,13 +227,17 @@ export default function RecordsTable({
                       </th>
                     );
                   })}
+                  {/* Issues and Actions are pinned together on the right.
+                      Issues offsets by the Actions width so they stack. */}
+                  <th className="sticky top-0 z-40 bg-slate-50 border-b border-l border-slate-200 px-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider" style={{ width: 92, minWidth: 92, right: 72 }}>
+                    Issues
+                  </th>
                   <th className="sticky top-0 right-0 z-40 bg-slate-50 border-b border-l border-slate-200 px-3 text-center text-[10px] font-bold text-slate-400 uppercase tracking-wider" style={{ width: 72, minWidth: 72 }}>
                     Actions
                   </th>
                 </tr>
                 {/* Filter row */}
                 <tr className="h-9">
-                  <th className="sticky left-0 z-40 bg-white border-b border-r border-slate-200 px-2" style={{ top: 36 }} />
                   {COLUMNS.map(c => (
                     <th key={c.key} className="sticky z-30 bg-white border-b border-slate-200 px-1.5" style={{ top: 36 }}>
                       {meta[c.key]?.values ? (
@@ -268,6 +269,7 @@ export default function RecordsTable({
                       )}
                     </th>
                   ))}
+                  <th className="sticky z-40 bg-white border-b border-l border-slate-200" style={{ top: 36, right: 72 }} />
                   <th className="sticky right-0 z-40 bg-white border-b border-l border-slate-200" style={{ top: 36 }} />
                 </tr>
               </thead>
@@ -282,8 +284,15 @@ export default function RecordsTable({
                   const bg = hot ? "bg-yellow-50" : gs.length ? "bg-rose-50 hover:bg-rose-100" : "bg-white hover:bg-slate-50";
                   return (
                     <tr key={row._id} id={"row-" + row._id} className={`${bg} transition-colors`}>
-                      <td className="sticky left-0 z-20 bg-inherit border-b border-r border-slate-100 px-3 py-2 align-top"
-                        style={{ boxShadow: accent && !hot ? `inset 3px 0 0 ${accent}` : undefined }}>
+                      {COLUMNS.map(c => (
+                        <td key={c.key} style={{ maxWidth: c.w }}
+                          className="border-b border-slate-100 px-3 py-2 text-slate-600 truncate whitespace-nowrap"
+                          title={(row[c.key] ?? "").trim() || undefined}>
+                          {cell(row, c)}
+                        </td>
+                      ))}
+                      <td className="sticky z-20 bg-inherit border-b border-l border-slate-100 px-3 py-2 align-top"
+                        style={{ right: 72, boxShadow: accent && !hot ? `inset 3px 0 0 ${accent}` : undefined }}>
                         {gs.length === 0
                           ? <span className="text-slate-200 text-[10px]">—</span>
                           : <div className="flex flex-col gap-0.5">
@@ -296,13 +305,6 @@ export default function RecordsTable({
                             {gs.length > 2 && <span className="text-[9px] text-slate-400 text-center">+{gs.length - 2} more</span>}
                           </div>}
                       </td>
-                      {COLUMNS.map(c => (
-                        <td key={c.key} style={{ maxWidth: c.w }}
-                          className="border-b border-slate-100 px-3 py-2 text-slate-600 truncate whitespace-nowrap"
-                          title={(row[c.key] ?? "").trim() || undefined}>
-                          {cell(row, c)}
-                        </td>
-                      ))}
                       <td className="sticky right-0 z-20 bg-inherit border-b border-l border-slate-100 px-2 py-2 text-center">
                         <button onClick={() => onEdit(row)} title="Edit record"
                           className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-slate-400 hover:text-green-700 hover:bg-green-50 border border-transparent hover:border-green-200 transition-colors">
