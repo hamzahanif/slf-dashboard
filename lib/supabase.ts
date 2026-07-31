@@ -27,9 +27,25 @@ async function fetchPages(buildQuery: (base: any) => any): Promise<Record<string
 //   2. Collect the set of VA names that appear in VA sheets.
 //   3. Fetch QA Tracker rows whose VA name is NOT in that set (e.g. Janine, who has no VA sheet).
 //   This prevents double-counting the 4 main VAs while still surfacing VAs only in QA Tracker.
+/**
+ * Whether entries.deleted_at exists yet (supabase/entries_add_deleted_at.sql).
+ * Probed once per process so reads keep working before the migration is run.
+ */
+let softDelete: boolean | null = null;
+async function hasSoftDelete(): Promise<boolean> {
+  if (softDelete !== null) return softDelete;
+  const { error } = await supabase.from("entries").select("deleted_at").limit(1);
+  softDelete = !error;
+  return softDelete;
+}
+
 export async function fetchAllEntries(vaName?: string): Promise<Record<string, unknown>[]> {
+  const soft = await hasSoftDelete();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const live = (r: any) => soft ? r.is("deleted_at", null) : r;
+
   const vaRows = await fetchPages(q => {
-    let r = q.select("*").neq("source_sheet", "QA Tracker").order("date", { ascending: false });
+    let r = live(q.select("*").neq("source_sheet", "QA Tracker")).order("date", { ascending: false });
     if (vaName) r = r.ilike("va_name", vaName);
     return r;
   });
@@ -44,7 +60,7 @@ export async function fetchAllEntries(vaName?: string): Promise<Record<string, u
 
   // Pull QA Tracker rows for VAs with no VA sheet of their own.
   const qaRows = await fetchPages(q => {
-    let r = q.select("*").eq("source_sheet", "QA Tracker").order("date", { ascending: false });
+    let r = live(q.select("*").eq("source_sheet", "QA Tracker")).order("date", { ascending: false });
     if (vaName) r = r.ilike("va_name", vaName);
     return r;
   });

@@ -197,8 +197,9 @@ export default function EditRowModal({ row, user, onClose, onSaved }: Props) {
         {confirmDelete && (
           <div className="px-6 py-3 bg-red-50 border-t border-red-200 flex items-center gap-3 flex-wrap flex-shrink-0">
             <p className="text-sm text-red-800 flex-1 min-w-[200px]">
-              Permanently delete <b>{row["Facility Name"]?.trim() || row["Facebook Group Name"]?.trim() || "this entry"}</b>
-              {row["Date"] ? <> from {row["Date"]}</> : null}? This cannot be undone.
+              Delete <b>{row["Facility Name"]?.trim() || row["Facebook Group Name"]?.trim() || "this entry"}</b>
+              {row["Date"] ? <> from {row["Date"]}</> : null}? It will be hidden from
+              the dashboard and every report, and can be restored from the database.
             </p>
             <button onClick={() => setConfirmDelete(false)} disabled={deleting}
               className="px-3 py-1.5 rounded-lg text-sm text-slate-600 hover:bg-white transition-colors">

@@ -67,10 +67,21 @@ export async function DELETE(req: NextRequest) {
     const auth = await authorizeRow(user, id);
     if (auth.status !== 200) return NextResponse.json({ error: auth.message }, { status: auth.status });
 
-    const { error } = await supabase.from("entries").delete().eq("id", id);
-    if (error) throw new Error(error.message);
+    // Soft delete: the row is hidden from every read but stays recoverable.
+    const { error } = await supabase
+      .from("entries").update({ deleted_at: new Date().toISOString() }).eq("id", id);
 
-    // Deletion is irreversible, so leave a trace of who removed what.
+    if (error) {
+      // Refuse rather than fall back to a permanent delete — removing a row
+      // while the user believes it is recoverable is the worst outcome here.
+      if (/deleted_at|schema cache|column/i.test(error.message)) {
+        return NextResponse.json({
+          error: "Delete is disabled until the database is migrated. Run supabase/entries_add_deleted_at.sql in the Supabase SQL editor.",
+        }, { status: 501 });
+      }
+      throw new Error(error.message);
+    }
+
     console.log(`[delete] ${user.name} (${user.role}) removed entry ${id}` +
       ` — ${auth.row.date} / ${auth.row.va_name} / ${auth.row.facility_name}`);
 
