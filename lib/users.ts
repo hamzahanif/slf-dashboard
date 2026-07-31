@@ -17,7 +17,7 @@ export const USERS: AppUser[] = [
   { username: "jack", passwordHash: "$2b$10$Ro0WRjT.0FltVUyqXikLdOQIptve43DvR/725/lA1hhJle5Z5NBUu", role: "admin", name: "Jack", title: "CEO", vaName: null },
   { username: "salman", passwordHash: "$2b$10$dVVBmlXzevkoU1y0ag488.YH2bTnnJXy.DxsqxDfv6r.CsF.vBhlG", role: "va", name: "Muhammad Salman", title: "VA", vaName: "Muhammad Salman" },
   { username: "abdulrehman", passwordHash: "$2b$10$9wu0iUXAxXvag5F5COiSOueWuODzuRSr.Zxf5/7SnyiilmS0SYV4q", role: "va", name: "Abdul Rehman", title: "VA", vaName: "Abdul Rehman" },
-  { username: "micro", passwordHash: "$2b$10$nKjx/U/BHQHlmRgHN10bweguXsva/EWeMw9awlVE5QtJEWneermbK", role: "va", name: "Micro Real", title: "VA", vaName: "Mico Real" },
+  { username: "micro", passwordHash: "$2b$10$nKjx/U/BHQHlmRgHN10bweguXsva/EWeMw9awlVE5QtJEWneermbK", role: "va", name: "Mico Real", title: "VA", vaName: "Mico Real" },
   { username: "fazeela", passwordHash: "$2b$10$OlVVRKrWEl.dG1UC/9IEVeIkXeIn1P/sj5.uzlOVpHFJCo.4jn94u", role: "va", name: "Fazeela", title: "VA", vaName: "Fazeela" },
 ];
 
