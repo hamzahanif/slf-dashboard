@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { parseRowDate, toYMD, VOCAB } from "@/lib/dash";
+import type { SessionPayload } from "@/lib/session";
 
 // Driven by the shared vocabulary so the edit modal, the log form and the
 // stored data can never disagree about what a column may contain.
@@ -28,14 +29,22 @@ interface Row {
 
 interface Props {
   row: Row;
+  user: SessionPayload;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export default function EditRowModal({ row, onClose, onSaved }: Props) {
+export default function EditRowModal({ row, user, onClose, onSaved }: Props) {
   const [form, setForm] = useState<Row>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Mirrors the server rule: admins may remove any entry, a VA only their own.
+  // The API enforces this against the row's stored owner regardless of the UI.
+  const owner = (row["VA Name"] ?? "").trim().toLowerCase();
+  const canDelete = user.role === "admin" || (!!user.vaName && user.vaName.trim().toLowerCase() === owner);
 
   useEffect(() => {
     const initial: Row = {};
@@ -83,6 +92,22 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleDelete() {
+    setDeleting(true); setError("");
+    try {
+      const res = await fetch("/api/edit", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row._id }),
+      });
+      if (res.status === 401) { setError("Your sign-in expired. Sign in again, then retry."); return; }
+      const data = await res.json();
+      if (data.ok) { onSaved(); onClose(); }
+      else setError(data.error ?? "Delete failed.");
+    } catch (e) { setError(String(e)); }
+    finally { setDeleting(false); }
   }
 
   const displayFields = Object.keys(form).filter(k => !HIDDEN_FIELDS.includes(k));
@@ -167,14 +192,39 @@ export default function EditRowModal({ row, onClose, onSaved }: Props) {
         {/* Errors live in the footer, not the scrolling body — otherwise a
             validation message can render below the fold and look like nothing
             happened when Save is clicked. */}
+        {/* Deleting is irreversible, so it takes a deliberate second click and
+            names the record being removed. */}
+        {confirmDelete && (
+          <div className="px-6 py-3 bg-red-50 border-t border-red-200 flex items-center gap-3 flex-wrap flex-shrink-0">
+            <p className="text-sm text-red-800 flex-1 min-w-[200px]">
+              Permanently delete <b>{row["Facility Name"]?.trim() || row["Facebook Group Name"]?.trim() || "this entry"}</b>
+              {row["Date"] ? <> from {row["Date"]}</> : null}? This cannot be undone.
+            </p>
+            <button onClick={() => setConfirmDelete(false)} disabled={deleting}
+              className="px-3 py-1.5 rounded-lg text-sm text-slate-600 hover:bg-white transition-colors">
+              Keep it
+            </button>
+            <button onClick={handleDelete} disabled={deleting}
+              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium px-4 py-1.5 rounded-lg text-sm transition-colors">
+              {deleting ? "Deleting…" : "Yes, delete"}
+            </button>
+          </div>
+        )}
+
         <div className="px-6 py-4 border-t border-slate-100 flex items-center gap-3 flex-shrink-0">
+          {canDelete && !confirmDelete && (
+            <button onClick={() => { setConfirmDelete(true); setError(""); }}
+              className="text-sm text-red-600 hover:text-red-700 hover:underline flex-shrink-0">
+              Delete entry
+            </button>
+          )}
           {error && <p className="text-sm text-red-600 flex-1 min-w-0">{error}</p>}
           <div className="ml-auto flex gap-3 flex-shrink-0">
             <button onClick={onClose}
               className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 transition-colors">
               Cancel
             </button>
-            <button onClick={handleSave} disabled={saving}
+            <button onClick={handleSave} disabled={saving || deleting}
               className="bg-green-700 hover:bg-green-800 disabled:opacity-50 text-white font-medium px-5 py-2 rounded-xl text-sm transition-colors">
               {saving ? "Saving…" : "Save changes"}
             </button>

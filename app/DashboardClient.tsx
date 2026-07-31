@@ -1121,7 +1121,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
         </footer>
       </div>
 
-      {editRow && <EditRowModal row={editRow} onClose={() => setEditRow(null)} onSaved={() => { setEditRow(null); loadData(); }}/>}
+      {editRow && <EditRowModal row={editRow} user={user} onClose={() => setEditRow(null)} onSaved={() => { setEditRow(null); loadData(); }}/>}
     </div>
   );
 }
