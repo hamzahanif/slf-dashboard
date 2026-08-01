@@ -9,21 +9,19 @@ import EditRowModal from "./EditRowModal";
 import DashboardHome from "./DashboardHome";
 import RecordsTable from "./RecordsTable";
 import QAReviewTable from "./QAReviewTable";
-import ExportReport from "./ExportReport";
 import {
-  Row, VA_COLORS, INACTIVE_VAS, ACTIVE_VA_COUNT, vaColor,
+  Row,
   parseRowDate, toYMD, startOfWeek, filterByRange,
   GLITCH_LABELS, GLITCH_PILL,
 } from "@/lib/dash";
 import { exportCSV } from "@/lib/csv";
 
-type Tab = "dashboard" | "performance" | "postcheck" | "qa" | "data" | "logentry" | "qareview";
+type Tab = "dashboard" | "postcheck" | "qa" | "data" | "logentry" | "qareview";
 /** Tabs whose own table fills the viewport and scrolls internally, so <main>
  *  must not scroll and must not be given a fixed pixel height anywhere. */
 const FULL_HEIGHT_TABS = new Set<Tab>(["data", "qareview"]);
 type Preset = "today" | "yesterday" | "week" | "month" | "alltime" | "custom";
 interface DashData { summary: SummaryStats; glitches: Glitch[]; }
-interface VAStat { vaName: string; count: number; rows: Row[]; }
 
 function getRange(p: Preset, cs: string, ce: string): [Date, Date] | null {
   const now = new Date(), t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -48,17 +46,6 @@ function fmtRange(r: [Date, Date] | null, p: Preset) {
   if (s.toDateString() === e.toDateString()) return s.toLocaleDateString("en-US", o);
   return `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", o)}`;
 }
-function toTitleCase(s: string) { return s.replace(/\b\w/g, c => c.toUpperCase()); }
-function buildStats(rows: Row[]): VAStat[] {
-  const m = new Map<string, { display: string; rows: Row[] }>();
-  for (const r of rows) {
-    const raw = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
-    const key = raw.toLowerCase();
-    if (!m.has(key)) m.set(key, { display: toTitleCase(raw), rows: [] });
-    m.get(key)!.rows.push(r);
-  }
-  return Array.from(m.values()).map(({ display, rows: r }) => ({ vaName: display, count: r.length, rows: r })).sort((a, b) => b.count - a.count);
-}
 type Bucket = "approved" | "pending" | "rejected" | "none";
 function getBucket(r: Row): Bucket {
   const v = (r["Comment Status"] ?? "").toLowerCase();
@@ -67,12 +54,6 @@ function getBucket(r: Row): Bucket {
   if (v.includes("reject") || v.includes("fail")) return "rejected";
   if (v.includes("pend")) return "pending";
   return "none";
-}
-function computeApproval(rows: Row[]) {
-  let a = 0, p = 0, r = 0;
-  for (const row of rows) { const b = getBucket(row); if (b === "approved") a++; else if (b === "pending") p++; else if (b === "rejected") r++; }
-  const t = a + p + r;
-  return { approved: a, pending: p, rejected: r, tracked: t, rate: t ? Math.round((a / t) * 100) : 0 };
 }
 function normUrl(u: string) {
   return u.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^(www\.|m\.|web\.)/, "").replace(/\?.*$/, "").replace(/\/$/, "");
@@ -155,505 +136,6 @@ function TrendChart({ rows, range }: { rows: Row[]; range: [Date, Date] | null }
   );
 }
 
-// ── VA bar chart ────────────────────────────────────────────────────────────
-function VABarChart({ stats }: { stats: VAStat[] }) {
-  const [hov, setHov] = useState<string | null>(null);
-  const max = Math.max(...stats.map(s => s.count), 1);
-  return (
-    <div className="space-y-3">
-      {stats.map(s => {
-        const pct = (s.count / max) * 100, c = vaColor(s.vaName);
-        const inactive = INACTIVE_VAS.has(s.vaName);
-        return (
-          <div key={s.vaName} onMouseEnter={() => setHov(s.vaName)} onMouseLeave={() => setHov(null)}>
-            <div className="flex items-center justify-between mb-1">
-              <span className={`text-xs font-medium flex items-center gap-2 ${inactive ? "text-slate-400" : "text-slate-700"}`}>
-                <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: c }}/>
-                {s.vaName}
-                {inactive && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400 border border-slate-200">Inactive</span>}
-              </span>
-              <span className="text-xs font-bold tabular-nums" style={{ color: c }}>{s.count}</span>
-            </div>
-            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, background: c, opacity: hov === s.vaName ? 1 : 0.7 }}/>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Donut chart ─────────────────────────────────────────────────────────────
-function DonutChart({ approved, pending, rejected, total }: { approved: number; pending: number; rejected: number; total: number }) {
-  const none = Math.max(total - approved - pending - rejected, 0);
-  const segments = [
-    { label: "Approved/Live", v: approved, c: "#16a34a" },
-    { label: "Pending", v: pending, c: "#f59e0b" },
-    { label: "Rejected", v: rejected, c: "#ef4444" },
-    { label: "No Status", v: none, c: "#e2e8f0" },
-  ].filter(d => d.v > 0);
-  const R = 52, r = 33, cx = 68, cy = 68;
-  let ang = -Math.PI / 2;
-  const slices = segments.map(d => {
-    const sw = (d.v / total) * 2 * Math.PI;
-    const x1 = cx + R * Math.cos(ang), y1 = cy + R * Math.sin(ang);
-    ang += sw;
-    const x2 = cx + R * Math.cos(ang), y2 = cy + R * Math.sin(ang);
-    const xi1 = cx + r * Math.cos(ang - sw), yi1 = cy + r * Math.sin(ang - sw);
-    const xi2 = cx + r * Math.cos(ang), yi2 = cy + r * Math.sin(ang);
-    const lg = sw > Math.PI ? 1 : 0;
-    return { ...d, path: `M${x1} ${y1}A${R} ${R} 0 ${lg} 1 ${x2} ${y2}L${xi2} ${yi2}A${r} ${r} 0 ${lg} 0 ${xi1} ${yi1}Z`, pct: Math.round((d.v / total) * 100) };
-  });
-  const rate = total > 0 ? Math.round((approved / total) * 100) : 0;
-  return (
-    <div className="flex items-center gap-5">
-      <svg viewBox="0 0 136 136" className="w-24 h-24 flex-shrink-0">
-        {slices.map((s, i) => <path key={i} d={s.path} fill={s.c} stroke="white" strokeWidth="2"/>)}
-        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="19" fontWeight="800" fill="#0f172a">{rate}%</text>
-        <text x={cx} y={cy + 12} textAnchor="middle" fontSize="9" fill="#64748b">approval</text>
-      </svg>
-      <div className="space-y-2 flex-1">
-        {slices.map(s => (
-          <div key={s.label} className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: s.c }}/>{s.label}
-            </span>
-            <span className="text-xs font-semibold text-slate-700 tabular-nums">{s.v} <span className="font-normal text-slate-400">({s.pct}%)</span></span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── KPI Card ────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, accent }: { label: string; value: number; accent: string }) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-shadow">
-      <div className="text-2xl font-black tabular-nums leading-none" style={{ color: accent }}>{value.toLocaleString()}</div>
-      <div className="text-xs text-slate-500 mt-1.5 leading-tight">{label}</div>
-    </div>
-  );
-}
-
-// ── Performance table ───────────────────────────────────────────────────────
-function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean }) {
-  if (!stats.length) return <div className="py-14 text-center text-slate-400 text-sm">No entries for the selected period.</div>;
-  const max = Math.max(...stats.map(s => s.count), 1);
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b border-slate-100">
-          <th className="text-left px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">VA Name</th>
-          <th className="text-right px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Entries</th>
-          {detailed && <th className="text-right px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Approval</th>}
-          <th className="px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Share</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-50">
-        {stats.map(s => {
-          const pct = (s.count / max) * 100, c = vaColor(s.vaName);
-          const appr = detailed ? computeApproval(s.rows) : null;
-          return (
-            <tr key={s.vaName} className="hover:bg-slate-50/60 transition-colors">
-              <td className="px-5 py-3">
-                <span className="flex items-center gap-2.5 font-medium text-slate-800">
-                  <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }}/>
-                  <span className={INACTIVE_VAS.has(s.vaName) ? "text-slate-400" : ""}>{s.vaName}</span>
-                  {INACTIVE_VAS.has(s.vaName) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400 border border-slate-200">Inactive</span>}
-                </span>
-              </td>
-              <td className="px-5 py-3 text-right font-bold tabular-nums" style={{ color: c }}>{s.count.toLocaleString()}</td>
-              {detailed && (
-                <td className="px-5 py-3 text-right">
-                  {appr && appr.tracked > 0
-                    ? <span className={`text-xs font-bold ${appr.rate >= 70 ? "text-green-600" : appr.rate >= 40 ? "text-amber-600" : "text-red-500"}`}>{appr.rate}%</span>
-                    : <span className="text-slate-300 text-xs">—</span>}
-                </td>
-              )}
-              <td className="px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: c }}/>
-                  </div>
-                  <span className="text-[10px] text-slate-400 w-7 text-right tabular-nums">{Math.round(pct)}%</span>
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
-// ── VA Comparison Line Chart ──────────────────────────────────────────────────
-// `rows` must be the globally date-filtered set. This chart used to receive the
-// full unfiltered table and carry its own competing date filter, so the period
-// bar at the top of the page appeared to do nothing to it.
-function VAComparisonChart({ rows }: { rows: Row[] }) {
-  const ALL_VA_NAMES = Object.keys(VA_COLORS);
-  const [activeVAs, setActiveVAs] = useState<Set<string>>(new Set(ALL_VA_NAMES));
-  const [granMode, setGranMode] = useState<"auto" | "daily" | "weekly" | "monthly">("auto");
-  const [tip, setTip] = useState<{ xi: number; key: string; values: { va: string; count: number; color: string }[] } | null>(null);
-
-  function wkStart(d: Date): string {
-    const day = d.getDay(), diff = day === 0 ? -6 : 1 - day;
-    const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
-    return toYMD(mon);
-  }
-  function pkLabel(key: string): string {
-    if (granularity === "monthly") {
-      const [y, m] = key.split("-");
-      return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-    }
-    const d = new Date(key + "T12:00:00");
-    if (granularity === "weekly") return `Wk ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  }
-
-  // Bucket size follows the span of whatever the global filter selected, so
-  // picking "Today" doesn't render a single weekly bucket.
-  const spanDays = useMemo(() => {
-    const ds = rows.map(r => parseRowDate(r["Date"])).filter(Boolean) as Date[];
-    if (ds.length < 2) return 1;
-    const lo = Math.min(...ds.map(d => +d)), hi = Math.max(...ds.map(d => +d));
-    return Math.round((hi - lo) / 86400000) + 1;
-  }, [rows]);
-  const autoGran: "daily" | "weekly" | "monthly" =
-    spanDays <= 45 ? "daily" : spanDays <= 200 ? "weekly" : "monthly";
-  const granularity = granMode === "auto" ? autoGran : granMode;
-
-  const { periods, series } = useMemo(() => {
-    const src = rows;
-    const pk = (d: Date) => {
-      if (granularity === "daily") return toYMD(d);
-      if (granularity === "weekly") return wkStart(d);
-      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-    };
-    const periodSet = new Set<string>();
-    const counts: Record<string, Record<string, number>> = {};
-    for (const r of src) {
-      const d = parseRowDate(r["Date"]);
-      if (!d) continue;
-      const va = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
-      if (!activeVAs.has(va)) continue;
-      const key = pk(d);
-      periodSet.add(key);
-      if (!counts[key]) counts[key] = {};
-      counts[key][va] = (counts[key][va] ?? 0) + 1;
-    }
-    const periods = [...periodSet].sort();
-    const series = ALL_VA_NAMES.filter(v => activeVAs.has(v)).map(va => ({
-      va, color: vaColor(va),
-      data: periods.map(p => counts[p]?.[va] ?? 0),
-    }));
-    return { periods, series };
-  }, [rows, activeVAs, granularity]);
-
-  const toggleVA = (va: string) => setActiveVAs(prev => {
-    const n = new Set(prev);
-    if (n.has(va)) { if (n.size > 1) n.delete(va); } else n.add(va);
-    return n;
-  });
-
-  const W = 560, H = 180, PT = 16, PR = 12, PB = 32, PL = 36;
-  const cW = W - PL - PR, cH = H - PT - PB;
-  const maxV = Math.max(...series.flatMap(s => s.data), 1);
-  const n = periods.length;
-  const xOf = (i: number) => PL + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
-  const yOf = (v: number) => PT + cH - (v / maxV) * cH;
-  const every = n > 24 ? Math.ceil(n / 8) : n > 12 ? 2 : 1;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="flex flex-wrap gap-1.5 flex-1 min-w-0">
-          {ALL_VA_NAMES.map(va => {
-            const c = vaColor(va);
-            const on = activeVAs.has(va);
-            return (
-              <button key={va} onClick={() => toggleVA(va)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${on ? "bg-white shadow-sm border-2" : "bg-slate-50 border border-slate-200 text-slate-400"}`}
-                style={on ? { borderColor: c, color: c } : {}}>
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: on ? c : "#cbd5e1" }} />
-                {va.split(" ")[0]}
-                {INACTIVE_VAS.has(va) && <span className="opacity-50 text-[9px]">&nbsp;(inactive)</span>}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {/* No date buttons here — the page's period bar governs the range.
-              This only chooses how finely the range is bucketed. */}
-          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-            {(["auto", "daily", "weekly", "monthly"] as const).map(g => (
-              <button key={g} onClick={() => setGranMode(g)}
-                title={g === "auto" ? "Bucket size follows the selected period" : undefined}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${granMode === g ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                {g === "auto" ? `Auto (${autoGran})` : g.charAt(0).toUpperCase() + g.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      {n === 0 ? (
-        <div className="h-44 flex items-center justify-center text-slate-300 text-sm">No data for this selection</div>
-      ) : (
-        <div className="relative select-none">
-          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
-            {[0, 0.25, 0.5, 0.75, 1].map(v => {
-              const y = yOf(maxV * v);
-              return <g key={v}>
-                <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
-                <text x={PL - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxV * v)}</text>
-              </g>;
-            })}
-            {series.map(s => {
-              const poly = s.data.map((v, i) => `${xOf(i)},${yOf(v)}`).join(" ");
-              return <polyline key={s.va} points={poly} fill="none" stroke={s.color}
-                strokeWidth={INACTIVE_VAS.has(s.va) ? 1.5 : 2.5}
-                strokeOpacity={INACTIVE_VAS.has(s.va) ? 0.45 : 1}
-                strokeLinejoin="round" strokeLinecap="round" />;
-            })}
-            {periods.map((p, i) => {
-              if (i % every !== 0 && i !== n - 1) return null;
-              return <text key={p} x={xOf(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="#94a3b8">{pkLabel(p)}</text>;
-            })}
-            {periods.map((_, i) => {
-              const x = xOf(i);
-              const bw = n > 1 ? cW / (n - 1) : cW;
-              return <rect key={i} x={x - bw / 2} y={PT} width={bw} height={cH} fill="transparent"
-                onMouseEnter={() => setTip({
-                  xi: x, key: periods[i],
-                  values: series.map(s => ({ va: s.va, count: s.data[i], color: s.color })).sort((a, b) => b.count - a.count),
-                })}
-                onMouseLeave={() => setTip(null)} />;
-            })}
-            {tip && series.map(s => {
-              const i = periods.indexOf(tip.key);
-              if (i < 0) return null;
-              return <circle key={s.va} cx={xOf(i)} cy={yOf(s.data[i])} r="3.5" fill={s.color} stroke="white" strokeWidth="2" />;
-            })}
-          </svg>
-          {tip && (
-            <div className="absolute pointer-events-none bg-slate-800 text-white text-xs px-3 py-2 rounded-xl shadow-xl z-10 min-w-[140px]"
-              style={{ left: `${(tip.xi / W) * 100}%`, bottom: "30px", transform: "translateX(-50%)" }}>
-              <div className="font-semibold text-slate-400 mb-1.5 text-[10px] uppercase tracking-wide">{pkLabel(tip.key)}</div>
-              {tip.values.map(v => (
-                <div key={v.va} className="flex items-center justify-between gap-4">
-                  <span className="flex items-center gap-1.5 text-slate-300">
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: v.color }} />
-                    {v.va.split(" ")[0]}
-                  </span>
-                  <span className="font-bold tabular-nums">{v.count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      <div className="flex flex-wrap gap-4 pt-1.5 border-t border-slate-100">
-        {series.map(s => (
-          <span key={s.va} className="flex items-center gap-1.5 text-xs text-slate-500">
-            <span className="w-6 h-0.5 inline-block rounded-full" style={{ background: s.color }} />
-            {s.va}
-            {INACTIVE_VAS.has(s.va) && <span className="text-[9px] text-slate-400">&nbsp;(inactive)</span>}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Live & Accurate grouped bar chart ─────────────────────────────────────────
-function LiveAccurateChart({ rows }: { rows: Row[] }) {
-  const vaNames = Object.keys(VA_COLORS);
-  const stats = useMemo(() => {
-    return vaNames.map(va => {
-      const vaRows = rows.filter(r => (r["VA Name"]?.trim() || r["_sourceSheet"]?.trim()) === va);
-      const total = vaRows.length;
-      const live = vaRows.filter(r => /live/i.test(r["Handoff Notes"] ?? "")).length;
-      const passed = vaRows.filter(r => /live/i.test(r["Handoff Notes"] ?? "") && !!r["SLF Listing ID"]?.trim()).length;
-      return { va, total, live, passed, livePct: total ? Math.round((live / total) * 100) : 0, passedPct: total ? Math.round((passed / total) * 100) : 0 };
-    }).filter(s => s.total > 0);
-  }, [rows]);
-
-  if (!stats.length) return <div className="h-44 flex items-center justify-center text-slate-300 text-sm">No data</div>;
-
-  const W = 560, H = 210, PT = 24, PR = 12, PB = 36, PL = 40;
-  const cW = W - PL - PR, cH = H - PT - PB;
-  const maxV = Math.max(...stats.map(s => s.total), 1);
-  const groupW = cW / stats.length;
-  const barW = Math.min(groupW * 0.22, 22);
-  const gap = 2;
-  const yOf = (v: number) => PT + cH - (v / maxV) * cH;
-
-  return (
-    <div className="space-y-3">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
-        {[0, 0.25, 0.5, 0.75, 1].map(v => {
-          const y = yOf(maxV * v);
-          return <g key={v}>
-            <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
-            <text x={PL - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxV * v)}</text>
-          </g>;
-        })}
-        {stats.map((s, i) => {
-          const cx = PL + groupW * (i + 0.5);
-          const totalGroupW = 3 * barW + 2 * gap;
-          const lx = cx - totalGroupW / 2;
-          const x1 = lx, x2 = lx + barW + gap, x3 = lx + 2 * (barW + gap);
-          const totalH = (s.total / maxV) * cH;
-          const liveH = (s.live / maxV) * cH;
-          const passedH = (s.passed / maxV) * cH;
-          return (
-            <g key={s.va}>
-              <rect x={x1} y={yOf(s.total)} width={barW} height={totalH} fill="#e2e8f0" rx="2" />
-              <rect x={x2} y={yOf(s.live)} width={barW} height={liveH} fill="#16a34a" rx="2" />
-              {s.livePct > 0 && <text x={x2 + barW / 2} y={yOf(s.live) - 3} textAnchor="middle" fontSize="8" fontWeight="700" fill="#16a34a">{s.livePct}%</text>}
-              <rect x={x3} y={yOf(s.passed)} width={barW} height={passedH} fill="#2563eb" rx="2" />
-              {s.passedPct > 0 && <text x={x3 + barW / 2} y={yOf(s.passed) - 3} textAnchor="middle" fontSize="8" fontWeight="700" fill="#2563eb">{s.passedPct}%</text>}
-              <text x={cx} y={H - PB + 14} textAnchor="middle" fontSize="9" fill={INACTIVE_VAS.has(s.va) ? "#94a3b8" : "#64748b"} fontWeight="500">{s.va.split(" ")[0]}</text>
-            </g>
-          );
-        })}
-      </svg>
-      <div className="flex flex-wrap items-center gap-5 pt-1.5 border-t border-slate-100">
-        {[{ color: "#e2e8f0", label: "Total" }, { color: "#16a34a", label: "Live" }, { color: "#2563eb", label: "Passed (accurate)" }].map(l => (
-          <span key={l.label} className="flex items-center gap-1.5 text-xs text-slate-500">
-            <span className="w-3 h-3 rounded-sm flex-shrink-0 inline-block" style={{ background: l.color }} />
-            {l.label}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── VA Scoreboard ─────────────────────────────────────────────────────────────
-function VAScoreboard({ rows }: { rows: Row[] }) {
-  const RANK_BADGE = ["🥇", "🥈", "🥉"];
-
-  const per = useMemo(() => {
-    const map = new Map<string, { total: number; listings: number; live: number; passed: number; days: Set<string> }>();
-    for (const r of rows) {
-      const va = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
-      if (!map.has(va)) map.set(va, { total: 0, listings: 0, live: 0, passed: 0, days: new Set() });
-      const s = map.get(va)!;
-      s.total++;
-      const hasListing = !!r["SLF Listing ID"]?.trim();
-      const isLive = /live/i.test(r["Handoff Notes"] ?? "");
-      const hasWp = !!r["WP- Post time"]?.trim();
-      if (hasListing) s.listings++;
-      if (isLive) s.live++;
-      if (isLive && hasListing) s.passed++;
-      const d = r["Date"]?.slice(0, 10);
-      if (d) s.days.add(d);
-    }
-    return Array.from(map.entries())
-      .filter(([vaName]) => !INACTIVE_VAS.has(vaName))
-      .map(([vaName, s]) => ({
-        vaName,
-        total: s.total,
-        listings: s.listings,
-        live: s.live,
-        passed: s.passed,
-        livePct: s.listings ? Math.round((s.live / s.listings) * 100) : 0,
-        passedPct: s.listings ? Math.round((s.passed / s.listings) * 100) : 0,
-        avgDay: s.days.size ? +(s.total / s.days.size).toFixed(1) : 0,
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [rows]);
-
-  if (!per.length) return <div className="py-10 text-center text-slate-400 text-sm">No entries for this period.</div>;
-
-  const Bar = ({ pct, color }: { pct: number; color: string }) => (
-    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1 mb-0.5">
-      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
-    </div>
-  );
-
-  return (
-    <div className="space-y-5">
-      {/* Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {per.map((p, i) => {
-          const c = vaColor(p.vaName);
-          return (
-            <div key={p.vaName} className="rounded-2xl border-2 p-4 bg-white relative overflow-hidden hover:shadow-md transition-shadow" style={{ borderColor: c }}>
-              <div className="absolute top-3 right-3 text-lg leading-none">{RANK_BADGE[i] ?? `#${i + 1}`}</div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }} />
-                <span className="font-bold text-xs text-slate-700 truncate">{p.vaName}</span>
-              </div>
-              <div className="text-2xl font-black text-slate-800 leading-none">{p.total.toLocaleString()}</div>
-              <div className="text-[10px] text-slate-400 mb-3">entries</div>
-
-              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live</div>
-              <Bar pct={p.livePct} color="#16a34a" />
-              <div className="text-xs font-semibold text-slate-700">{p.live.toLocaleString()} <span className="font-normal text-slate-400">({p.livePct}%)</span></div>
-
-              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mt-2.5">Passed</div>
-              <Bar pct={p.passedPct} color="#2563eb" />
-              <div className="text-xs font-semibold text-slate-700">{p.passed.toLocaleString()} <span className="font-normal text-slate-400">({p.passedPct}%)</span></div>
-
-              <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500">
-                <span><b className="text-slate-700">{p.listings}</b> listings</span>
-                <span><b className="text-slate-700">{p.avgDay}</b>/day</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Comparison table */}
-      <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full text-sm min-w-[600px]">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200">
-              <th className="text-left px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">VA</th>
-              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Entries</th>
-              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Listings</th>
-              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live</th>
-              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live %</th>
-              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Passed %</th>
-              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Avg/day</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {per.map((p, i) => {
-              const c = vaColor(p.vaName);
-              return (
-                <tr key={p.vaName} className="hover:bg-slate-50/60 transition-colors">
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-2 font-medium text-slate-800">
-                      <span className="text-sm leading-none">{RANK_BADGE[i] ?? `#${i + 1}`}</span>
-                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }} />
-                      {p.vaName}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-bold tabular-nums" style={{ color: c }}>{p.total.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.listings.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.live.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right">
-                    <span className={`font-bold tabular-nums ${p.livePct >= 70 ? "text-green-600" : p.livePct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.livePct}%</span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <span className={`font-bold tabular-nums ${p.passedPct >= 70 ? "text-green-600" : p.passedPct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.passedPct}%</span>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.avgDay}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 // ── Glitch row ───────────────────────────────────────────────────────────────
 function GlitchRow({ g, detail, onNavigate }: { g: Glitch; detail?: boolean; onNavigate?: (row: Row) => void }) {
   return (
@@ -682,34 +164,6 @@ function SPill({ s }: { s: Bucket }) {
   const L = { approved: "Approved", pending: "Pending", rejected: "Rejected", none: "No status" };
   return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${C[s]}`}>{L[s]}</span>;
 }
-
-// ── VA daily breakdown ────────────────────────────────────────────────────────
-function VADailyBreakdown({ va }: { va: VAStat }) {
-  const c = vaColor(va.vaName);
-  const byDay = new Map<string, number>();
-  for (const r of va.rows) { const d = parseRowDate(r["Date"]); if (d) { const k = toYMD(d); byDay.set(k, (byDay.get(k) ?? 0) + 1); } }
-  const sorted = Array.from(byDay.entries()).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 10);
-  if (!sorted.length) return null;
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-        <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: c }}/>
-        <h3 className="font-semibold text-slate-800 text-sm">{va.vaName}</h3>
-        <span className="ml-auto text-xs text-slate-400">{va.count.toLocaleString()} total</span>
-      </div>
-      <div className="px-5 py-4 flex flex-wrap gap-2">
-        {sorted.map(([ymd, n]) => (
-          <div key={ymd} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
-            <span className="text-slate-400">{new Date(ymd + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-            <span className="font-bold" style={{ color: c }}>{n}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DashboardClient({ user }: { user: SessionPayload }) {
@@ -757,8 +211,6 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
   const dateRange = useMemo(() => getRange(preset, customStart, customEnd), [preset, customStart, customEnd]);
   const filteredRows = useMemo(() => filterByRange(rows, dateRange), [rows, dateRange]);
-  const vaStats = useMemo(() => buildStats(filteredRows), [filteredRows]);
-  const approval = useMemo(() => computeApproval(filteredRows), [filteredRows]);
   const urlMatches = useMemo(() => {
     const q = normUrl(checkUrl); if (!q) return [];
     return rows.filter(r => { const u = r["Direct Facebook Post URL"]; return u && normUrl(u) === q; })
@@ -809,7 +261,6 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
   const NAV = [
     { id: "dashboard" as Tab, label: "Dashboard", icon: "home" },
-    { id: "performance" as Tab, label: "Performance", icon: "chart" },
     { id: "postcheck" as Tab, label: "Post Check", icon: "search" },
     { id: "qa" as Tab, label: "QA & Glitches", icon: "alert", badge: filteredGlitches.length || undefined },
     { id: "data" as Tab, label: "Records", icon: "table" },
@@ -817,7 +268,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
     { id: "logentry" as Tab, label: "Log Entry", icon: "plus" },
   ];
   const TAB_TITLE: Record<Tab, string> = {
-    dashboard: "Dashboard", performance: "VA Performance",
+    dashboard: "Dashboard",
     postcheck: "Post Check", qa: "QA & Glitches", data: "Records",
     qareview: "QA Review", logentry: "Log Entry",
   };
@@ -955,47 +406,6 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
               {/* ── DASHBOARD ── */}
               {tab === "dashboard" && <DashboardHome rows={rows} userName={user.name}/>}
-
-              {/* ── PERFORMANCE ── */}
-              {tab === "performance" && <>
-                {/* VA Scoreboard — top of performance tab */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <div>
-                      <h2 className="font-bold text-slate-800">VA Performance Comparison</h2>
-                      <p className="text-xs text-slate-400 mt-0.5">Ranked by total entries · {dateLabel}</p>
-                    </div>
-                    <ExportReport rows={filteredRows} title="VA Performance Report"
-                      generatedBy={user.name}
-                      filters={[
-                        { label: "Period", value: dateLabel },
-                        { label: "Records", value: `${filteredRows.length.toLocaleString()} of ${rows.length.toLocaleString()}` },
-                      ]}/>
-                  </div>
-                  <VAScoreboard rows={filteredRows} />
-                </div>
-
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                  <div className="mb-4">
-                    <h2 className="font-bold text-slate-800">Listings per day — VA comparison</h2>
-                    <p className="text-xs text-slate-400 mt-0.5">Toggle VAs to compare · {dateLabel}</p>
-                  </div>
-                  <VAComparisonChart rows={filteredRows} />
-                </div>
-
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                  <div className="mb-4">
-                    <h2 className="font-bold text-slate-800">Accurate &amp; LIVE listings</h2>
-                    <p className="text-xs text-slate-400 mt-0.5">Live = "Live" in Handoff Notes · Accurate = has SLF Listing ID · {dateLabel}</p>
-                  </div>
-                  <LiveAccurateChart rows={filteredRows} />
-                </div>
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-5 py-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">Detailed Breakdown</h2></div>
-                  <PerfTable stats={vaStats} detailed/>
-                </div>
-                {vaStats.map(va => <VADailyBreakdown key={va.vaName} va={va}/>)}
-              </>}
 
               {/* ── POST CHECK ── */}
               {tab === "postcheck" && (
