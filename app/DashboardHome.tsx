@@ -622,63 +622,6 @@ function getBucket(r: Row): Bucket {
   if (v.includes("pend")) return "pending";
   return "none";
 }
-function computeApproval(rows: Row[]) {
-  let a = 0, p = 0, r = 0;
-  for (const row of rows) { const b = getBucket(row); if (b === "approved") a++; else if (b === "pending") p++; else if (b === "rejected") r++; }
-  const t = a + p + r;
-  return { approved: a, pending: p, rejected: r, tracked: t, rate: t ? Math.round((a / t) * 100) : 0 };
-}
-
-function PerfTable({ stats, detailed }: { stats: VAStat[]; detailed?: boolean }) {
-  if (!stats.length) return <div className="py-14 text-center text-slate-400 text-sm">No entries for the selected period.</div>;
-  const max = Math.max(...stats.map(s => s.count), 1);
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b border-slate-100">
-          <th className="text-left px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">VA Name</th>
-          <th className="text-right px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Entries</th>
-          {detailed && <th className="text-right px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Approval</th>}
-          <th className="px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Share</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-50">
-        {stats.map(s => {
-          const pctv = (s.count / max) * 100, c = vaColor(s.vaName);
-          const appr = detailed ? computeApproval(s.rows) : null;
-          return (
-            <tr key={s.vaName} className="hover:bg-slate-50/60 transition-colors">
-              <td className="px-5 py-3">
-                <span className="flex items-center gap-2.5 font-medium text-slate-800">
-                  <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }}/>
-                  <span className={INACTIVE_VAS.has(s.vaName) ? "text-slate-400" : ""}>{s.vaName}</span>
-                  {INACTIVE_VAS.has(s.vaName) && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400 border border-slate-200">Inactive</span>}
-                </span>
-              </td>
-              <td className="px-5 py-3 text-right font-bold tabular-nums" style={{ color: c }}>{s.count.toLocaleString()}</td>
-              {detailed && (
-                <td className="px-5 py-3 text-right">
-                  {appr && appr.tracked > 0
-                    ? <span className={`text-xs font-bold ${appr.rate >= 70 ? "text-green-600" : appr.rate >= 40 ? "text-amber-600" : "text-red-500"}`}>{appr.rate}%</span>
-                    : <span className="text-slate-300 text-xs">—</span>}
-                </td>
-              )}
-              <td className="px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${pctv}%`, background: c }}/>
-                  </div>
-                  <span className="text-[10px] text-slate-400 w-7 text-right tabular-nums">{Math.round(pctv)}%</span>
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
 // ── VA Comparison Line Chart ──────────────────────────────────────────────────
 // `rows` must be the globally date-filtered set. This chart used to receive the
 // full unfiltered table and carry its own competing date filter, so the period
@@ -928,10 +871,10 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
   const RANK_BADGE = ["🥇", "🥈", "🥉"];
 
   const per = useMemo(() => {
-    const map = new Map<string, { total: number; listings: number; live: number; passed: number; days: Set<string> }>();
+    const map = new Map<string, { total: number; listings: number; live: number; passed: number; days: Set<string>; approved: number; tracked: number }>();
     for (const r of rows) {
       const va = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
-      if (!map.has(va)) map.set(va, { total: 0, listings: 0, live: 0, passed: 0, days: new Set() });
+      if (!map.has(va)) map.set(va, { total: 0, listings: 0, live: 0, passed: 0, days: new Set(), approved: 0, tracked: 0 });
       const s = map.get(va)!;
       s.total++;
       const hasListingV = !!r["SLF Listing ID"]?.trim();
@@ -939,6 +882,8 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
       if (hasListingV) s.listings++;
       if (isLiveV) s.live++;
       if (isLiveV && hasListingV) s.passed++;
+      const bucket = getBucket(r);
+      if (bucket !== "none") { s.tracked++; if (bucket === "approved") s.approved++; }
       const d = r["Date"]?.slice(0, 10);
       if (d) s.days.add(d);
     }
@@ -953,6 +898,7 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
         livePct: s.listings ? Math.round((s.live / s.listings) * 100) : 0,
         passedPct: s.listings ? Math.round((s.passed / s.listings) * 100) : 0,
         avgDay: s.days.size ? +(s.total / s.days.size).toFixed(1) : 0,
+        approvalPct: s.tracked ? Math.round((s.approved / s.tracked) * 100) : null,
       }))
       .sort((a, b) => b.total - a.total);
   }, [rows]);
@@ -968,7 +914,7 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
   return (
     <div className="space-y-5">
       {/* Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {per.map((p, i) => {
           const c = vaColor(p.vaName);
           return (
@@ -1009,6 +955,7 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
               <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live</th>
               <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Live %</th>
               <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Passed %</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Approval %</th>
               <th className="text-right px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Avg/day</th>
             </tr>
           </thead>
@@ -1032,6 +979,11 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <span className={`font-bold tabular-nums ${p.passedPct >= 70 ? "text-green-600" : p.passedPct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.passedPct}%</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {p.approvalPct === null
+                      ? <span className="text-slate-300 text-xs">—</span>
+                      : <span className={`font-bold tabular-nums ${p.approvalPct >= 70 ? "text-green-600" : p.approvalPct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.approvalPct}%</span>}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-slate-600">{p.avgDay}</td>
                 </tr>
@@ -1349,48 +1301,36 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
       </Card>
 
       {/* ── VA Performance (merged from the old standalone Performance tab) ── */}
-      <div className="pt-2 mt-1 border-t border-slate-200">
-        <h2 className="text-sm font-bold text-slate-800 mb-3">VA Performance</h2>
+      <div className="flex items-center gap-2 pt-3 mt-1 border-t border-slate-200">
+        <span className="w-1 h-4 bg-green-600 rounded-full" />
+        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">VA Performance</h2>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="font-bold text-slate-800">VA Performance Comparison</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Ranked by total entries · {label}</p>
-          </div>
-          <ExportReport rows={cur} title="VA Performance Report"
-            generatedBy={userName}
-            filters={[
-              { label: "Period", value: label },
-              { label: "Records", value: `${fmtNum(cur.length)} of ${fmtNum(rows.length)}` },
-            ]}/>
-        </div>
+      <Card title="VA Performance Comparison" sub={`Ranked by total entries · ${label}`}
+        right={<ExportReport rows={cur} title="VA Performance Report"
+          generatedBy={userName}
+          filters={[
+            { label: "Period", value: label },
+            { label: "Records", value: `${fmtNum(cur.length)} of ${fmtNum(rows.length)}` },
+          ]}/>}>
         <VAScoreboard rows={cur} />
+      </Card>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Card title="Listings per day" sub={`Toggle VAs to compare · ${label}`}>
+          <VAComparisonChart rows={cur} />
+        </Card>
+        <Card title="Accurate & LIVE listings" sub={`Live = "Live" in Handoff Notes · Accurate = has SLF Listing ID · ${label}`}>
+          <LiveAccurateChart rows={cur} />
+        </Card>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-        <div className="mb-4">
-          <h2 className="font-bold text-slate-800">Listings per day — VA comparison</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Toggle VAs to compare · {label}</p>
+      <div>
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Daily activity by VA</h3>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {vaStats.map(va => <VADailyBreakdown key={va.vaName} va={va}/>)}
         </div>
-        <VAComparisonChart rows={cur} />
       </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-        <div className="mb-4">
-          <h2 className="font-bold text-slate-800">Accurate &amp; LIVE listings</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Live = &quot;Live&quot; in Handoff Notes · Accurate = has SLF Listing ID · {label}</p>
-        </div>
-        <LiveAccurateChart rows={cur} />
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100"><h2 className="font-bold text-slate-800">Detailed Breakdown</h2></div>
-        <PerfTable stats={vaStats} detailed/>
-      </div>
-
-      {vaStats.map(va => <VADailyBreakdown key={va.vaName} va={va}/>)}
     </div>
   );
 }
