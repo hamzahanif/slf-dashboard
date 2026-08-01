@@ -387,7 +387,10 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
 
         {/* ── Content ── */}
         {/* These tabs own their internal scroll, so the page must not scroll too. */}
-        <main className={`flex-1 min-h-0 min-w-0 p-5 ${FULL_HEIGHT_TABS.has(tab) ? "overflow-hidden" : "overflow-auto"}`}>
+        {/* overscroll-contain stops trackpad rubber-band scrolling at the end of
+            this list from bleeding through to the page behind it — without it,
+            momentum scroll past the last widget briefly reveals blank space. */}
+        <main className={`flex-1 min-h-0 min-w-0 p-5 overscroll-contain ${FULL_HEIGHT_TABS.has(tab) ? "overflow-hidden" : "overflow-auto"}`}>
 
           {tab === "logentry" && <LogEntryForm user={user}/>}
 

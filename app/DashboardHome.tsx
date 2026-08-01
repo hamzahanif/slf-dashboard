@@ -1131,14 +1131,6 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
     return [...m.entries()].map(([label, x]) => ({ label, v: x.v, sub: `${pct(x.live, x.v)}% live` })).sort((a, b) => b.v - a.v);
   }, [cur]);
 
-  const simple = (field: string) => {
-    const m = new Map<string, number>();
-    for (const r of cur) { const k = (r[field] ?? "").trim() || "—"; m.set(k, (m.get(k) ?? 0) + 1); }
-    return [...m.entries()].map(([label, v]) => ({ label, v, sub: `${pct(v, cur.length)}%` })).sort((a, b) => b.v - a.v);
-  };
-  const shiftItems = useMemo(() => simple("Shift"), [cur]);
-  const actionItems = useMemo(() => simple("Action Type"), [cur]);
-
   // Auto-generated highlights.
   const insights = useMemo(() => {
     const out: { k: string; v: string; tone: string }[] = [];
@@ -1261,10 +1253,42 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         ))}
       </div>
 
-      {/* ── Trend + funnel ── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <Card className="xl:col-span-2" title="Activity over time" sub={`Entries stacked by VA · ${label}`}>
-          {cur.length ? <ActivityChart rows={cur} range={range} vaList={vaList} /> : <Empty h="h-56" />}
+      {/* ── Activity over time (full width) ── */}
+      <Card title="Activity over time" sub={`Entries stacked by VA · ${label}`}>
+        {cur.length ? <ActivityChart rows={cur} range={range} vaList={vaList} /> : <Empty h="h-56" />}
+      </Card>
+
+      {/* ── Listings per day — VA comparison (full width) ── */}
+      <Card title="Listings per day" sub={`Toggle VAs to compare · ${label}`}>
+        <VAComparisonChart rows={cur} />
+      </Card>
+
+      {/* ── Accurate & LIVE listings (full width) ── */}
+      <Card title="Accurate & LIVE listings" sub={`Live = "Live" in Handoff Notes · Accurate = has SLF Listing ID · ${label}`}>
+        <LiveAccurateChart rows={cur} />
+      </Card>
+
+      {/* ── VA Performance (merged from the old standalone Performance tab) ── */}
+      <div className="flex items-center gap-2 pt-3 mt-1 border-t border-slate-200">
+        <span className="w-1 h-4 bg-green-600 rounded-full" />
+        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">VA Performance</h2>
+      </div>
+
+      {/* ── VA Performance Comparison (full width) ── */}
+      <Card title="VA Performance Comparison" sub={`Ranked by total entries · ${label}`}
+        right={<ExportReport rows={cur} title="VA Performance Report"
+          generatedBy={userName}
+          filters={[
+            { label: "Period", value: label },
+            { label: "Records", value: `${fmtNum(cur.length)} of ${fmtNum(rows.length)}` },
+          ]}/>}>
+        <VAScoreboard rows={cur} />
+      </Card>
+
+      {/* ── Data health (half) + Listing pipeline (half right) ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Card title="Data health" sub="Field completeness and duplicate checks on actionable records">
+          <DataHealth rows={cur} />
         </Card>
         <Card title="Listing pipeline" sub="Cumulative — each stage is a subset of the one above">
           <Funnel rows={cur} />
@@ -1282,48 +1306,11 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         </Card>
       </div>
 
-      {/* ── Groups + breakdowns ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
-        <Card className="xl:col-span-2" title="Top Facebook groups" sub="Click to filter the page">
-          <RankedList items={groupItems} onPick={g => setGroupSel(s => { const n = new Set(s); if (n.has(g)) n.delete(g); else n.add(g); return n; })} selected={groupSel} max={8} />
-        </Card>
-        <Card title="Shift split" sub="Share of entries">
-          <RankedList items={shiftItems} onPick={v => setShiftSel(s => { const n = new Set(s); if (n.has(v)) n.delete(v); else n.add(v); return n; })} selected={shiftSel} max={6} />
-        </Card>
-        <Card title="Action types" sub="Share of entries">
-          <RankedList items={actionItems} onPick={v => setActionSel(s => { const n = new Set(s); if (n.has(v)) n.delete(v); else n.add(v); return n; })} selected={actionSel} max={6} />
-        </Card>
-      </div>
-
-      {/* ── Data health ── */}
-      <Card title="Data health" sub="Field completeness and duplicate checks on actionable records">
-        <DataHealth rows={cur} />
+      {/* ── Top Facebook groups (full width — its former siblings, Shift split
+          and Action types, were removed as redundant with the filter bar above) ── */}
+      <Card title="Top Facebook groups" sub="Click to filter the page">
+        <RankedList items={groupItems} onPick={g => setGroupSel(s => { const n = new Set(s); if (n.has(g)) n.delete(g); else n.add(g); return n; })} selected={groupSel} max={8} />
       </Card>
-
-      {/* ── VA Performance (merged from the old standalone Performance tab) ── */}
-      <div className="flex items-center gap-2 pt-3 mt-1 border-t border-slate-200">
-        <span className="w-1 h-4 bg-green-600 rounded-full" />
-        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">VA Performance</h2>
-      </div>
-
-      <Card title="VA Performance Comparison" sub={`Ranked by total entries · ${label}`}
-        right={<ExportReport rows={cur} title="VA Performance Report"
-          generatedBy={userName}
-          filters={[
-            { label: "Period", value: label },
-            { label: "Records", value: `${fmtNum(cur.length)} of ${fmtNum(rows.length)}` },
-          ]}/>}>
-        <VAScoreboard rows={cur} />
-      </Card>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <Card title="Listings per day" sub={`Toggle VAs to compare · ${label}`}>
-          <VAComparisonChart rows={cur} />
-        </Card>
-        <Card title="Accurate & LIVE listings" sub={`Live = "Live" in Handoff Notes · Accurate = has SLF Listing ID · ${label}`}>
-          <LiveAccurateChart rows={cur} />
-        </Card>
-      </div>
 
       <div>
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Daily activity by VA</h3>
