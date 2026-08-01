@@ -718,24 +718,31 @@ function getBucket(r: Row): Bucket {
   if (v.includes("pend")) return "pending";
   return "none";
 }
-// ── Live & Accurate grouped bar chart ─────────────────────────────────────────
-// Three bars per VA: everything they logged, how much went live, and how much
-// went live *with* a listing ID (the accurate subset). Total is deliberately
-// the recessive grey — it is the denominator, not an achievement.
+// ── Accurate & LIVE listings — grouped bars over a full stats table ───────────
+// Was two cards ("Accurate & LIVE listings" and "Overall performance") plotting
+// the same three numbers per VA. The bars carry the visual comparison; the table
+// carries the exact counts plus listings and each VA's share of all live output.
 function LiveAccurateChart({ rows }: { rows: Row[] }) {
   const [tip, setTip] = useState<{ x: number; y: number; va: string; label: string; v: number; share: number | null } | null>(null);
   const stats = useMemo(() => {
-    return Object.keys(VA_COLORS).map(va => {
-      const vaRows = rows.filter(r => (r["VA Name"]?.trim() || r["_sourceSheet"]?.trim()) === va);
-      const total = vaRows.length;
-      const live = vaRows.filter(isLive).length;
-      const passed = vaRows.filter(isAccurate).length;
-      return { va, total, live, passed, livePct: pct(live, total), passedPct: pct(passed, total) };
-    }).filter(s => s.total > 0).sort((a, b) => b.total - a.total);
+    const m = new Map<string, { total: number; listings: number; live: number; passed: number }>();
+    for (const r of rows) {
+      const va = vaOf(r);
+      if (!m.has(va)) m.set(va, { total: 0, listings: 0, live: 0, passed: 0 });
+      const s = m.get(va)!;
+      s.total++;
+      if (hasListing(r)) s.listings++;
+      if (isLive(r)) s.live++;
+      if (isAccurate(r)) s.passed++;
+    }
+    return [...m.entries()]
+      .map(([va, s]) => ({ va, ...s, livePct: pct(s.live, s.total), passedPct: pct(s.passed, s.total) }))
+      .sort((a, b) => b.total - a.total);
   }, [rows]);
 
   if (!stats.length) return <Empty h="h-56" />;
 
+  const grandLive = stats.reduce((a, s) => a + s.live, 0);
   const W = 1000, H = 300, PT = 24, PR = 16, PB = 48, PL = 44;
   const cW = W - PL - PR, cH = H - PT - PB;
   const maxV = Math.max(...stats.map(s => s.total), 1);
@@ -750,7 +757,8 @@ function LiveAccurateChart({ rows }: { rows: Row[] }) {
   ];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Grouped bars */}
       <div className="overflow-x-auto">
         <div className="relative min-w-[560px]">
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible" onMouseLeave={() => setTip(null)}>
@@ -797,6 +805,7 @@ function LiveAccurateChart({ rows }: { rows: Row[] }) {
           )}
         </div>
       </div>
+
       <div className="flex flex-wrap items-center gap-5 pt-2 border-t border-slate-100">
         {SERIES.map(l => (
           <span key={l.key} className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -806,68 +815,8 @@ function LiveAccurateChart({ rows }: { rows: Row[] }) {
         ))}
         <span className="text-[11px] text-slate-400 ml-auto">% is that VA&apos;s share of their own entries.</span>
       </div>
-    </div>
-  );
-}
 
-// ── Overall performance — ranked bars + summary table ─────────────────────────
-// Ranks VAs by verified-live output rather than raw volume: logging a lot of
-// entries that never go live is not performance. The table underneath carries
-// the counts the bars deliberately leave out.
-function OverallPerformance({ rows }: { rows: Row[] }) {
-  const [tip, setTip] = useState<{ i: number; va: string; text: string } | null>(null);
-  const per = useMemo(() => {
-    const m = new Map<string, { total: number; listings: number; live: number; passed: number }>();
-    for (const r of rows) {
-      const va = vaOf(r);
-      if (!m.has(va)) m.set(va, { total: 0, listings: 0, live: 0, passed: 0 });
-      const s = m.get(va)!;
-      s.total++;
-      if (hasListing(r)) s.listings++;
-      if (isLive(r)) s.live++;
-      if (isAccurate(r)) s.passed++;
-    }
-    return [...m.entries()].map(([va, s]) => ({
-      va, ...s, livePct: pct(s.live, s.total), passedPct: pct(s.passed, s.total),
-    })).sort((a, b) => b.live - a.live);
-  }, [rows]);
-
-  if (!per.length) return <Empty h="h-40" />;
-  const maxLive = Math.max(...per.map(p => p.live), 1);
-  const grandLive = per.reduce((a, p) => a + p.live, 0);
-
-  return (
-    <div className="space-y-4">
-      {/* Ranked bars */}
-      <div className="space-y-1.5">
-        {per.map((p, i) => {
-          const c = vaColor(p.va);
-          return (
-            <div key={p.va} className="relative flex items-center gap-3"
-              onMouseEnter={() => setTip({ i, va: p.va, text: `${fmtNum(p.live)} live of ${fmtNum(p.total)} (${p.livePct}%) · ${fmtNum(p.passed)} accurate (${p.passedPct}%)` })}
-              onMouseLeave={() => setTip(null)}>
-              <span className="w-5 text-[11px] font-bold text-slate-300 tabular-nums text-right flex-shrink-0">{i + 1}</span>
-              <span className={`w-28 sm:w-36 text-xs font-semibold truncate flex-shrink-0 ${INACTIVE_VAS.has(p.va) ? "text-slate-400" : "text-slate-700"}`}>
-                {p.va}
-              </span>
-              <div className="flex-1 h-7 bg-slate-100 rounded-lg overflow-hidden relative min-w-0">
-                <div className="h-full rounded-lg transition-all duration-500" style={{ width: `${(p.live / maxLive) * 100}%`, background: c }} />
-              </div>
-              <span className="w-24 sm:w-28 text-[11px] text-slate-500 tabular-nums text-right flex-shrink-0">
-                <b className="text-slate-700">{fmtNum(p.live)}</b> live · {p.livePct}%
-              </span>
-              {tip?.i === i && (
-                <div className="absolute left-1/3 -top-1 pointer-events-none bg-slate-900 text-white text-[11px] px-3 py-2 rounded-xl shadow-2xl z-20 whitespace-nowrap -translate-y-full">
-                  <div className="text-[10px] uppercase tracking-wide text-slate-400">{tip.va}</div>
-                  <div className="mt-0.5">{tip.text}</div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Summary table */}
+      {/* Exact counts the bars round off, plus listings and share of all live output */}
       <div className="overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full text-sm min-w-[560px]">
           <thead>
@@ -878,7 +827,7 @@ function OverallPerformance({ rows }: { rows: Row[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {per.map(p => {
+            {stats.map(p => {
               const c = vaColor(p.va);
               return (
                 <tr key={p.va} className="hover:bg-slate-50/60 transition-colors">
@@ -1290,15 +1239,10 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         <ActivityTimeline rows={cur} range={range} vaList={vaList} periodLabel={label} />
       </Card>
 
-      {/* 3 · Accurate & LIVE listings */}
+      {/* 3 · Accurate & LIVE listings (absorbed the old Overall performance card) */}
       <Card title="Accurate & LIVE listings"
         sub="LIVE = Handoff Notes “Live” · Accurate = live with an SLF Listing ID. Bars show counts; % is that VA’s share of their own entries.">
         <LiveAccurateChart rows={cur} />
-      </Card>
-
-      {/* 4 · Overall performance */}
-      <Card title="Overall performance" sub={`Ranked by verified-live output · ${label}`}>
-        <OverallPerformance rows={cur} />
       </Card>
 
       {/* ── SUPPORTING DETAIL ──────────────────────────────────────────────── */}
