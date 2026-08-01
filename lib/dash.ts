@@ -129,11 +129,21 @@ export const VOCAB: Record<string, { options: string[]; default: string }> = {
   },
   "Promo Comment": {
     options: ["No", "Yes"],
-    default: "No",                                // 98%
+    // Consistently 96-100% "No" for every VA, Mico included. A VA once asked
+    // for this to default "Yes" because "we can't list without posting a
+    // comment" — that's true, but describes Comment Left (Script A) above,
+    // which already defaults Yes. Left as-is; flip only on an explicit,
+    // confirmed request naming this field specifically.
+    default: "No",
   },
   "Comment Status": {
     options: ["Approved", "Pending"],
-    default: "",                                  // 97% blank — leave unset
+    // VA feedback: this field is essentially unused (86-100% blank for every
+    // VA) but when it IS touched, defaulting to blank meant re-selecting
+    // "Approved" on every entry. Pending still shows up occasionally for two
+    // VAs (Abdul 2%, Salman <1%) — worth the rare switch, not worth the
+    // click on every other entry.
+    default: "Approved",
   },
   "Handoff Notes": {
     options: ["Live", "Pending approval", "Comments disabled", "Unable to post", "Declined", "Duplicate"],
@@ -156,6 +166,18 @@ export const VA_SHIFT: Record<string, string> = {
   "Abdul Rehman": "Afternoon",
   "Fazeela": "Evening",
   "Janine": "Evening",
+};
+
+/** Media Uploaded's default genuinely varies by VA — not noise, a real
+ *  difference in what they find. Mico is 80% "No"; the other three are
+ *  78-90% "Yes". A single shared default is wrong for someone no matter
+ *  which way it's set, so this overrides VOCAB["Media Uploaded"].default
+ *  per VA. Falls back to that shared default (admin, no VA picked yet). */
+export const VA_MEDIA_DEFAULT: Record<string, string> = {
+  "Mico Real": "No",
+  "Muhammad Salman": "Yes",
+  "Abdul Rehman": "Yes",
+  "Fazeela": "Yes",
 };
 
 /** Stable identity for a row across reloads — QA reviews are keyed by this. */

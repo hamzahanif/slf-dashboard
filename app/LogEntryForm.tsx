@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { SessionPayload } from "@/lib/session";
-import { toYMD, VOCAB, VA_SHIFT } from "@/lib/dash";
+import { toYMD, VOCAB, VA_SHIFT, VA_MEDIA_DEFAULT } from "@/lib/dash";
 
 const VA_NAMES = ["Mico Real", "Muhammad Salman", "Abdul Rehman", "Fazeela"];
 
@@ -25,6 +25,12 @@ function today(): string {
   return toYMD(new Date());
 }
 
+/** Current local clock time as HH:MM, for the WP Post Time field's default. */
+function nowTime(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 interface Props {
   user: SessionPayload;
 }
@@ -43,12 +49,14 @@ export default function LogEntryForm({ user }: Props) {
     "Direct Facebook Post URL": "",
     "Facility Name": "",
     "SLF Listing ID": "",
-    "Media Uploaded": VOCAB["Media Uploaded"].default,
+    "Media Uploaded": VA_MEDIA_DEFAULT[defaultVaName] ?? VOCAB["Media Uploaded"].default,
     "Comment Left (Script A)": VOCAB["Comment Left (Script A)"].default,
     "Comment Status": VOCAB["Comment Status"].default,
     "Action Type": VOCAB["Action Type"].default,
     "Promo Comment": VOCAB["Promo Comment"].default,
-    "WP Post Time": "",
+    // Defaults to right now — the date is already set above, so this field
+    // only needs the clock time. Still editable for a slightly earlier post.
+    "WP Post Time": nowTime(),
     "FB Account": "",
     "Handoff Notes": VOCAB["Handoff Notes"].default,
     "Status / Notes": VOCAB["Status / Notes"].default,
@@ -59,6 +67,28 @@ export default function LogEntryForm({ user }: Props) {
   const [dupWarning, setDupWarning] = useState<string | null>(null);
   const [confirmedDup, setConfirmedDup] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+
+  // How many listings this VA has already logged for the selected date, so
+  // that's visible without leaving the form to check Records.
+  const [dayCount, setDayCount] = useState<number | null>(null);
+  const [dayCountLoading, setDayCountLoading] = useState(false);
+
+  const refreshDayCount = useCallback(async (va: string, date: string) => {
+    if (!va || !date) { setDayCount(null); return; }
+    setDayCountLoading(true);
+    try {
+      const res = await fetch("/api/rows");
+      const data = await res.json();
+      const rows: { [k: string]: string }[] = data.rows ?? [];
+      const n = rows.filter(r =>
+        r["VA Name"]?.trim() === va && (r["Date"] ?? "").slice(0, 10) === date
+      ).length;
+      setDayCount(n);
+    } catch { setDayCount(null); }
+    finally { setDayCountLoading(false); }
+  }, []);
+
+  useEffect(() => { refreshDayCount(form.vaName, form.Date); }, [form.vaName, form.Date, refreshDayCount]);
 
   function set(field: string, value: string) {
     setForm(f => ({ ...f, [field]: value }));
@@ -139,16 +169,18 @@ export default function LogEntryForm({ user }: Props) {
           "Direct Facebook Post URL": "",
           "Facility Name": "",
           "SLF Listing ID": "",
-          "Media Uploaded": VOCAB["Media Uploaded"].default,
+          "Media Uploaded": VA_MEDIA_DEFAULT[f.vaName] ?? VOCAB["Media Uploaded"].default,
           "Comment Left (Script A)": VOCAB["Comment Left (Script A)"].default,
           "Comment Status": VOCAB["Comment Status"].default,
           "Action Type": VOCAB["Action Type"].default,
           "Promo Comment": VOCAB["Promo Comment"].default,
-          "WP Post Time": "",
+          // Reset to the current time for the next listing, not blank.
+          "WP Post Time": nowTime(),
           "FB Account": f["FB Account"],
           "Handoff Notes": VOCAB["Handoff Notes"].default,
           "Status / Notes": VOCAB["Status / Notes"].default,
         }));
+        refreshDayCount(form.vaName, form.Date);
       } else {
         setResult({ error: data.error ?? "Submission failed." });
       }
@@ -162,9 +194,23 @@ export default function LogEntryForm({ user }: Props) {
   return (
     <div className="max-w-3xl mx-auto py-6 px-4">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="bg-green-700 px-6 py-4">
-          <h2 className="text-white font-bold text-lg">Log New Entry</h2>
-          <p className="text-green-200 text-sm mt-0.5">Fill in the details and submit — data goes straight to your Google Sheet.</p>
+        <div className="bg-green-700 px-6 py-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-white font-bold text-lg">Log New Entry</h2>
+            <p className="text-green-200 text-sm mt-0.5">Fill in the details and submit — data goes straight to your Google Sheet.</p>
+          </div>
+          {/* Daily count for the selected VA + date, so this doesn't require a
+              trip to Records to check "today's entries". */}
+          {form.vaName && (
+            <div className="shrink-0 bg-green-800/60 rounded-xl px-4 py-2 text-center">
+              <div className="text-white font-bold text-xl leading-none">
+                {dayCountLoading ? "…" : dayCount ?? "—"}
+              </div>
+              <div className="text-green-200 text-[11px] mt-1 whitespace-nowrap">
+                logged {form.Date === toYMD(new Date()) ? "today" : `on ${form.Date}`}
+              </div>
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -187,9 +233,15 @@ export default function LogEntryForm({ user }: Props) {
                 {isAdmin ? (
                   <select value={form.vaName}
                     onChange={e => {
-                      // Each VA works one fixed shift, so fill it in for them.
+                      // Each VA works one fixed shift and has their own typical
+                      // answer for Media Uploaded, so refill both when an admin
+                      // picks who they're logging for.
                       const va = e.target.value;
-                      setForm(f => ({ ...f, vaName: va, Shift: VA_SHIFT[va] ?? f.Shift }));
+                      setForm(f => ({
+                        ...f, vaName: va,
+                        Shift: VA_SHIFT[va] ?? f.Shift,
+                        "Media Uploaded": VA_MEDIA_DEFAULT[va] ?? VOCAB["Media Uploaded"].default,
+                      }));
                     }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white">
                     <option value="">Select VA…</option>
@@ -286,7 +338,10 @@ export default function LogEntryForm({ user }: Props) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">WP Post Time</label>
-                <input type="datetime-local" value={form["WP Post Time"]}
+                {/* Time only — the date above already covers the date part, and
+                    every stored value is a plain clock time anyway. Defaults to
+                    now; still editable for a slightly earlier post. */}
+                <input type="time" value={form["WP Post Time"]}
                   onChange={e => set("WP Post Time", e.target.value)}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400"
                 />
