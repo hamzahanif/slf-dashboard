@@ -203,8 +203,20 @@ function KpiTile({ label, value, suffix, delta, deltaUnit, spark, color, hint }:
   );
 }
 
-// ── Activity over time — stacked area by VA, with crosshair tooltip ───────────
-function ActivityChart({ rows, range, vaList }: { rows: Row[]; range: [Date, Date] | null; vaList: string[] }) {
+// ── Activity timeline ─────────────────────────────────────────────────────────
+// One chart for "how many listings, by whom, over time". Replaces the old
+// stacked-area card plus the separate per-VA line card, which plotted the same
+// numbers twice. The mode switch preserves both readings: Stacked answers
+// "how much in total, and who made it up"; Lines answers "who is outpacing whom".
+// The legend doubles as the series filter, so there is one control, not two.
+function ActivityTimeline({ rows, range, vaList, periodLabel }: {
+  rows: Row[]; range: [Date, Date] | null; vaList: string[]; periodLabel: string;
+}) {
+  const [mode, setMode] = useState<"stacked" | "lines">("stacked");
+  const [granSel, setGranSel] = useState<Gran | "auto">("auto");
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [hi, setHi] = useState<number | null>(null);
+
   const span = useMemo(() => {
     if (range) return daysBetween(range[0], range[1]) + 1;
     const ds = rows.map(r => parseRowDate(r["Date"])).filter(Boolean) as Date[];
@@ -212,11 +224,11 @@ function ActivityChart({ rows, range, vaList }: { rows: Row[]; range: [Date, Dat
     return daysBetween(new Date(Math.min(...ds.map(d => +d))), new Date(Math.max(...ds.map(d => +d)))) + 1;
   }, [rows, range]);
   const auto: Gran = span <= 45 ? "daily" : span <= 200 ? "weekly" : "monthly";
-  const [gran, setGran] = useState<Gran | "auto">("auto");
-  const g: Gran = gran === "auto" ? auto : gran;
-  const [hi, setHi] = useState<number | null>(null);
+  const g: Gran = granSel === "auto" ? auto : granSel;
+  const unit = g === "daily" ? "day" : g === "weekly" ? "week" : "month";
 
-  const { periods, series, totals, maxTotal } = useMemo(() => {
+  const { periods, series, totals, maxTotal, maxSingle } = useMemo(() => {
+    const shown = vaList.filter(v => !off.has(v));
     const key = (d: Date) =>
       g === "daily" ? toYMD(d)
         : g === "weekly" ? toYMD(startOfWeek(d))
@@ -230,7 +242,7 @@ function ActivityChart({ rows, range, vaList }: { rows: Row[]; range: [Date, Dat
       if (!counts.has(k)) counts.set(k, new Map());
       const m = counts.get(k)!; m.set(va, (m.get(va) ?? 0) + 1);
     }
-    // Dense period axis so gaps in activity are visible rather than collapsed.
+    // Dense period axis, so a quiet stretch reads as a dip rather than vanishing.
     const start = range ? range[0] : lo, end = range ? range[1] : hiD;
     const periods: string[] = [];
     if (start && end) {
@@ -243,91 +255,236 @@ function ActivityChart({ rows, range, vaList }: { rows: Row[]; range: [Date, Dat
         while (c <= end) { periods.push(toYMD(c)); c = addDays(c, step); }
       }
     }
-    const series = vaList.map(va => ({ va, color: vaColor(va), data: periods.map(p => counts.get(p)?.get(va) ?? 0) }));
+    const series = shown.map(va => ({ va, color: vaColor(va), data: periods.map(p => counts.get(p)?.get(va) ?? 0) }));
     const totals = periods.map((_, i) => series.reduce((s, x) => s + x.data[i], 0));
-    return { periods, series, totals, maxTotal: Math.max(...totals, 1) };
-  }, [rows, range, g, vaList]);
+    return {
+      periods, series, totals,
+      maxTotal: Math.max(...totals, 1),
+      maxSingle: Math.max(...series.flatMap(s => s.data), 1),
+    };
+  }, [rows, range, g, vaList, off]);
 
-  const label = (k: string) => {
+  // Totals per VA are computed over the *unfiltered* VA list so a muted series
+  // still shows its number — you can see what you're excluding before you do.
+  const allTotals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) { const v = vaOf(r); m.set(v, (m.get(v) ?? 0) + 1); }
+    return m;
+  }, [rows]);
+
+  const stat = useMemo(() => {
+    const total = totals.reduce((a, b) => a + b, 0);
+    const active = totals.filter(t => t > 0).length;
+    let peakIdx = -1, peak = 0;
+    totals.forEach((t, i) => { if (t > peak) { peak = t; peakIdx = i; } });
+    const byVa = series.map(s => ({ va: s.va, total: s.data.reduce((a, b) => a + b, 0) })).sort((a, b) => b.total - a.total);
+    return { total, active, avg: active ? total / active : 0, peak, peakIdx, top: byVa[0] ?? null };
+  }, [series, totals]);
+
+  const fmtKey = (k: string) => {
     if (g === "monthly") { const [y, m] = k.split("-"); return new Date(+y, +m - 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" }); }
     const d = parseRowDate(k)!;
-    return (g === "weekly" ? "" : "") + d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+  const fmtKeyLong = (k: string) => {
+    if (g === "monthly") { const [y, m] = k.split("-"); return new Date(+y, +m - 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }); }
+    const d = parseRowDate(k)!;
+    const base = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    return g === "weekly" ? `Week of ${base}` : base;
   };
 
-  if (!periods.length) return <Empty h="h-56" />;
-
-  const W = 720, H = 220, PT = 14, PR = 10, PB = 26, PL = 34;
+  const W = 900, H = 250, PT = 20, PR = 14, PB = 28, PL = 42;
   const cW = W - PL - PR, cH = H - PT - PB, n = periods.length;
+  const scaleMax = mode === "stacked" ? maxTotal : maxSingle;
   const xOf = (i: number) => PL + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
-  const yOf = (v: number) => PT + cH - (v / maxTotal) * cH;
+  const yOf = (v: number) => PT + cH - (v / scaleMax) * cH;
+  const every = Math.max(1, Math.ceil(n / 12));
 
   // Cumulative stack, drawn back-to-front.
   const cum: number[][] = [];
-  let running = new Array(n).fill(0);
-  for (const s of series) { running = running.map((v, i) => v + s.data[i]); cum.push([...running]); }
-  const every = Math.max(1, Math.ceil(n / 9));
+  {
+    let run = new Array(n).fill(0);
+    for (const s of series) { run = run.map((v, i) => v + s.data[i]); cum.push([...run]); }
+  }
+
+  const toggle = (va: string) => setOff(p => { const s = new Set(p); if (s.has(va)) s.delete(va); else s.add(va); return s; });
+
+  const TILES = [
+    { k: "Total entries", v: fmtNum(stat.total), s: periodLabel },
+    { k: `Avg per ${unit}`, v: stat.avg.toFixed(1), s: `${fmtNum(stat.active)} active ${unit}${stat.active === 1 ? "" : "s"}` },
+    { k: `Busiest ${unit}`, v: fmtNum(stat.peak), s: stat.peakIdx >= 0 ? fmtKey(periods[stat.peakIdx]) : "—" },
+    {
+      k: "Top contributor", v: stat.top?.va.split(" ")[0] ?? "—",
+      s: stat.top && stat.total ? `${fmtNum(stat.top.total)} · ${pct(stat.top.total, stat.total)}% of shown` : "—",
+    },
+  ];
 
   return (
-    <div className="space-y-2.5">
-      <div className="flex justify-end -mt-1">
-        <SegBtn<Gran | "auto"> value={gran} onChange={setGran}
+    <div className="space-y-3.5">
+      {/* Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-2 -mt-1">
+        <SegBtn<"stacked" | "lines"> value={mode} onChange={setMode}
+          opts={[{ id: "stacked", label: "Stacked total" }, { id: "lines", label: "Compare VAs" }]} />
+        <SegBtn<Gran | "auto"> value={granSel} onChange={setGranSel}
           opts={[{ id: "auto", label: `Auto (${auto})` }, { id: "daily", label: "Daily" }, { id: "weekly", label: "Weekly" }, { id: "monthly", label: "Monthly" }]} />
       </div>
-      <div className="relative select-none">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible" onMouseLeave={() => setHi(null)}>
-          {[0, .25, .5, .75, 1].map(v => {
-            const y = yOf(maxTotal * v);
-            return <g key={v}>
-              <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
-              <text x={PL - 5} y={y + 3.5} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxTotal * v)}</text>
-            </g>;
-          })}
-          {cum.map((upper, si) => {
-            const lower = si === 0 ? new Array(n).fill(0) : cum[si - 1];
-            const d = `M${xOf(0)},${yOf(lower[0])}` +
-              upper.map((v, i) => ` L${xOf(i)},${yOf(v)}`).join("") +
-              [...lower].reverse().map((v, ri) => ` L${xOf(n - 1 - ri)},${yOf(v)}`).join("") + "Z";
-            return <path key={series[si].va} d={d} fill={series[si].color} fillOpacity={INACTIVE_VAS.has(series[si].va) ? .3 : .68} stroke="white" strokeWidth="1" />;
-          })}
-          {periods.map((p, i) => {
-            // Regular ticks, plus the final one — but only when it won't collide
-            // with the last regular tick.
-            const onTick = i % every === 0;
-            const isLast = i === n - 1;
-            if (!onTick && !isLast) return null;
-            if (isLast && !onTick && (n - 1) % every < every * 0.6) return null;
-            return <text key={p} x={xOf(i)} y={H - 6} textAnchor="middle" fontSize="9" fill="#94a3b8">{label(p)}</text>;
-          })}
-          {hi !== null && <line x1={xOf(hi)} y1={PT} x2={xOf(hi)} y2={PT + cH} stroke="#475569" strokeWidth="1" strokeDasharray="3 3" />}
-          {periods.map((_, i) => (
-            <rect key={i} x={xOf(i) - (n > 1 ? cW / (n - 1) : cW) / 2} y={PT} width={n > 1 ? cW / (n - 1) : cW} height={cH}
-              fill="transparent" onMouseEnter={() => setHi(i)} />
-          ))}
-        </svg>
-        {hi !== null && totals[hi] >= 0 && (
-          <div className="absolute pointer-events-none bg-slate-900 text-white text-[11px] px-3 py-2 rounded-xl shadow-2xl z-20 min-w-[150px]"
-            style={{ left: `${(xOf(hi) / W) * 100}%`, top: 4, transform: `translateX(${hi > n / 2 ? "-105%" : "5%"})` }}>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1.5">{label(periods[hi])}</div>
-            {series.filter(s => s.data[hi] > 0).sort((a, b) => b.data[hi] - a.data[hi]).map(s => (
-              <div key={s.va} className="flex items-center justify-between gap-4 leading-5">
-                <span className="flex items-center gap-1.5 text-slate-300"><span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />{s.va.split(" ")[0]}</span>
-                <span className="font-bold tabular-nums">{s.data[hi]}</span>
-              </div>
-            ))}
-            <div className="flex items-center justify-between gap-4 mt-1 pt-1 border-t border-slate-700 font-bold">
-              <span className="text-slate-400">Total</span><span className="tabular-nums">{totals[hi]}</span>
-            </div>
+
+      {/* Stat strip — the headline numbers behind the curve */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-100 rounded-xl overflow-hidden border border-slate-100">
+        {TILES.map(t => (
+          <div key={t.k} className="bg-white px-3.5 py-2.5">
+            <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider leading-tight">{t.k}</p>
+            <p className="text-lg font-black text-slate-800 tabular-nums leading-tight mt-0.5 truncate">{t.v}</p>
+            <p className="text-[10px] text-slate-400 leading-tight truncate" title={t.s}>{t.s}</p>
           </div>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2 border-t border-slate-100">
-        {series.map(s => (
-          <span key={s.va} className="flex items-center gap-1.5 text-[11px] text-slate-500">
-            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.color }} />{s.va}
-            {INACTIVE_VAS.has(s.va) && <span className="text-[9px] text-slate-400">(inactive)</span>}
-          </span>
         ))}
       </div>
+
+      {!n || !stat.total ? <Empty h="h-60" /> : (
+        // Scrolls sideways rather than squashing: at phone widths a 900x250
+        // viewBox would render ~100px tall and the curve becomes unreadable.
+        <div className="overflow-x-auto">
+        <div className="relative select-none min-w-[560px]">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible" onMouseLeave={() => setHi(null)}>
+            <defs>
+              {series.map((s, i) => (
+                <linearGradient key={s.va} id={`atl-${i}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={s.color} stopOpacity={INACTIVE_VAS.has(s.va) ? .34 : .82} />
+                  <stop offset="100%" stopColor={s.color} stopOpacity={INACTIVE_VAS.has(s.va) ? .16 : .42} />
+                </linearGradient>
+              ))}
+            </defs>
+
+            {/* Recessive gridlines + y axis */}
+            {[0, .25, .5, .75, 1].map(v => {
+              const y = yOf(scaleMax * v);
+              return <g key={v}>
+                <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                <text x={PL - 6} y={y + 3.5} textAnchor="end" fontSize="10" fill="#94a3b8">{Math.round(scaleMax * v)}</text>
+              </g>;
+            })}
+
+            {/* Average reference — only meaningful against the stacked total */}
+            {mode === "stacked" && stat.avg > 0 && (
+              <g>
+                <line x1={PL} y1={yOf(stat.avg)} x2={W - PR} y2={yOf(stat.avg)}
+                  stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" opacity=".7" />
+                {/* White halo, or the label vanishes wherever a band runs behind it. */}
+                <text x={W - PR} y={yOf(stat.avg) - 5} textAnchor="end" fontSize="9" fontWeight="600"
+                  fill="#64748b" stroke="white" strokeWidth="3" paintOrder="stroke"
+                  strokeLinejoin="round" vectorEffect="non-scaling-stroke">
+                  avg {stat.avg.toFixed(1)}
+                </text>
+              </g>
+            )}
+
+            {mode === "stacked" ? (
+              cum.map((upper, si) => {
+                const lower = si === 0 ? new Array(n).fill(0) : cum[si - 1];
+                const d = `M${xOf(0)},${yOf(lower[0])}` +
+                  upper.map((v, i) => ` L${xOf(i)},${yOf(v)}`).join("") +
+                  [...lower].reverse().map((v, ri) => ` L${xOf(n - 1 - ri)},${yOf(v)}`).join("") + "Z";
+                return <path key={series[si].va} d={d} fill={`url(#atl-${si})`} stroke="white" strokeWidth="2" vectorEffect="non-scaling-stroke" />;
+              })
+            ) : (
+              series.map(s => (
+                <polyline key={s.va} points={s.data.map((v, i) => `${xOf(i)},${yOf(v)}`).join(" ")}
+                  fill="none" stroke={s.color}
+                  strokeWidth={INACTIVE_VAS.has(s.va) ? 1.5 : 2}
+                  strokeOpacity={INACTIVE_VAS.has(s.va) ? .5 : 1}
+                  strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+              ))
+            )}
+
+            {/* Peak marker */}
+            {mode === "stacked" && stat.peakIdx >= 0 && stat.peak > 0 && (
+              <circle cx={xOf(stat.peakIdx)} cy={yOf(stat.peak)} r="4" fill="#0f172a" stroke="white" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            )}
+
+            {/* X axis */}
+            {periods.map((p, i) => {
+              const onTick = i % every === 0, isLast = i === n - 1;
+              if (!onTick && !isLast) return null;
+              if (isLast && !onTick && (n - 1) % every < every * .6) return null;
+              return <text key={p} x={xOf(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="#94a3b8">{fmtKey(p)}</text>;
+            })}
+
+            {/* Crosshair + hover dots */}
+            {hi !== null && <line x1={xOf(hi)} y1={PT} x2={xOf(hi)} y2={PT + cH} stroke="#475569" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
+            {hi !== null && (mode === "lines"
+              ? series.map(s => <circle key={s.va} cx={xOf(hi)} cy={yOf(s.data[hi])} r="4.5" fill={s.color} stroke="white" strokeWidth="2" vectorEffect="non-scaling-stroke" />)
+              : <circle cx={xOf(hi)} cy={yOf(totals[hi])} r="4.5" fill="#0f172a" stroke="white" strokeWidth="2" vectorEffect="non-scaling-stroke" />)}
+
+            {/* Hit targets, wider than the marks */}
+            {periods.map((_, i) => (
+              <rect key={i} x={xOf(i) - (n > 1 ? cW / (n - 1) : cW) / 2} y={PT} width={n > 1 ? cW / (n - 1) : cW} height={cH}
+                fill="transparent" onMouseEnter={() => setHi(i)} />
+            ))}
+          </svg>
+
+          {hi !== null && (
+            <div className="absolute pointer-events-none bg-slate-900 text-white text-[11px] px-3 py-2.5 rounded-xl shadow-2xl z-20 min-w-[170px]"
+              style={{ left: `${(xOf(hi) / W) * 100}%`, top: 4, transform: `translateX(${hi > n / 2 ? "-105%" : "5%"})` }}>
+              <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1.5">{fmtKeyLong(periods[hi])}</div>
+              {series.filter(s => s.data[hi] > 0).sort((a, b) => b.data[hi] - a.data[hi]).map(s => (
+                <div key={s.va} className="flex items-center justify-between gap-5 leading-5">
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />{s.va.split(" ")[0]}
+                  </span>
+                  <span className="tabular-nums">
+                    <b>{s.data[hi]}</b>
+                    <span className="text-slate-500"> · {pct(s.data[hi], totals[hi])}%</span>
+                  </span>
+                </div>
+              ))}
+              {totals[hi] === 0 && <div className="text-slate-500 leading-5">No entries logged</div>}
+              <div className="flex items-center justify-between gap-5 mt-1.5 pt-1.5 border-t border-slate-700 font-bold">
+                <span className="text-slate-400">Total</span><span className="tabular-nums">{totals[hi]}</span>
+              </div>
+              {stat.avg > 0 && totals[hi] > 0 && (
+                <div className="text-[10px] text-slate-500 mt-1">
+                  {totals[hi] >= stat.avg ? "+" : "−"}{Math.abs(Math.round(((totals[hi] - stat.avg) / stat.avg) * 100))}% vs avg {unit}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        </div>
+      )}
+
+      {/* Legend doubles as the series filter — click a VA to mute it */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 pt-3 border-t border-slate-100">
+        {vaList.map(va => {
+          const on = !off.has(va), c = vaColor(va);
+          const tot = allTotals.get(va) ?? 0;
+          const grand = [...allTotals.values()].reduce((a, b) => a + b, 0);
+          const share = pct(tot, grand);
+          return (
+            <button key={va} onClick={() => toggle(va)}
+              title={on ? `Hide ${va}` : `Show ${va}`}
+              className={`text-left rounded-xl border px-2.5 py-2 transition-all ${on ? "bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm" : "bg-slate-50 border-slate-100"}`}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors" style={{ background: on ? c : "#cbd5e1" }} />
+                <span className={`text-[11px] font-medium truncate ${on ? "text-slate-600" : "text-slate-400"}`}>{va.split(" ")[0]}</span>
+                {INACTIVE_VAS.has(va) && <span className="text-[8px] text-slate-400 flex-shrink-0">inactive</span>}
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-sm font-black tabular-nums ${on ? "text-slate-800" : "text-slate-400"}`}>{fmtNum(tot)}</span>
+                <span className="text-[10px] text-slate-400 tabular-nums">{share}%</span>
+              </div>
+              <div className="h-1 bg-slate-100 rounded-full overflow-hidden mt-1.5">
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${share}%`, background: on ? c : "#cbd5e1" }} />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-slate-400">
+        {mode === "stacked"
+          ? "Bands stack to the period total; the dashed line marks the average and the dark dot the busiest period."
+          : "Each line is one VA's own count — lines are compared against each other, not summed."}
+        {" "}Click a VA above to mute it.
+      </p>
     </div>
   );
 }
@@ -622,185 +779,6 @@ function getBucket(r: Row): Bucket {
   if (v.includes("pend")) return "pending";
   return "none";
 }
-// ── VA Comparison Line Chart ──────────────────────────────────────────────────
-// `rows` must be the globally date-filtered set. This chart used to receive the
-// full unfiltered table and carry its own competing date filter, so the period
-// bar at the top of the page appeared to do nothing to it.
-function VAComparisonChart({ rows }: { rows: Row[] }) {
-  const ALL_VA_NAMES = Object.keys(VA_COLORS);
-  const [activeVAs, setActiveVAs] = useState<Set<string>>(new Set(ALL_VA_NAMES));
-  const [granMode, setGranMode] = useState<"auto" | "daily" | "weekly" | "monthly">("auto");
-  const [tip, setTip] = useState<{ xi: number; key: string; values: { va: string; count: number; color: string }[] } | null>(null);
-
-  function wkStart(d: Date): string {
-    const day = d.getDay(), diff = day === 0 ? -6 : 1 - day;
-    const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
-    return toYMD(mon);
-  }
-  function pkLabel(key: string): string {
-    if (granularity === "monthly") {
-      const [y, m] = key.split("-");
-      return new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-    }
-    const d = new Date(key + "T12:00:00");
-    if (granularity === "weekly") return `Wk ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  }
-
-  // Bucket size follows the span of whatever the global filter selected, so
-  // picking "Today" doesn't render a single weekly bucket.
-  const spanDays = useMemo(() => {
-    const ds = rows.map(r => parseRowDate(r["Date"])).filter(Boolean) as Date[];
-    if (ds.length < 2) return 1;
-    const lo = Math.min(...ds.map(d => +d)), hi = Math.max(...ds.map(d => +d));
-    return Math.round((hi - lo) / 86400000) + 1;
-  }, [rows]);
-  const autoGran: "daily" | "weekly" | "monthly" =
-    spanDays <= 45 ? "daily" : spanDays <= 200 ? "weekly" : "monthly";
-  const granularity = granMode === "auto" ? autoGran : granMode;
-
-  const { periods, series } = useMemo(() => {
-    const src = rows;
-    const pk = (d: Date) => {
-      if (granularity === "daily") return toYMD(d);
-      if (granularity === "weekly") return wkStart(d);
-      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-    };
-    const periodSet = new Set<string>();
-    const counts: Record<string, Record<string, number>> = {};
-    for (const r of src) {
-      const d = parseRowDate(r["Date"]);
-      if (!d) continue;
-      const va = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
-      if (!activeVAs.has(va)) continue;
-      const key = pk(d);
-      periodSet.add(key);
-      if (!counts[key]) counts[key] = {};
-      counts[key][va] = (counts[key][va] ?? 0) + 1;
-    }
-    const periods = [...periodSet].sort();
-    const series = ALL_VA_NAMES.filter(v => activeVAs.has(v)).map(va => ({
-      va, color: vaColor(va),
-      data: periods.map(p => counts[p]?.[va] ?? 0),
-    }));
-    return { periods, series };
-  }, [rows, activeVAs, granularity]);
-
-  const toggleVA = (va: string) => setActiveVAs(prev => {
-    const n = new Set(prev);
-    if (n.has(va)) { if (n.size > 1) n.delete(va); } else n.add(va);
-    return n;
-  });
-
-  const W = 560, H = 180, PT = 16, PR = 12, PB = 32, PL = 36;
-  const cW = W - PL - PR, cH = H - PT - PB;
-  const maxV = Math.max(...series.flatMap(s => s.data), 1);
-  const n = periods.length;
-  const xOf = (i: number) => PL + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
-  const yOf = (v: number) => PT + cH - (v / maxV) * cH;
-  const every = n > 24 ? Math.ceil(n / 8) : n > 12 ? 2 : 1;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="flex flex-wrap gap-1.5 flex-1 min-w-0">
-          {ALL_VA_NAMES.map(va => {
-            const c = vaColor(va);
-            const on = activeVAs.has(va);
-            return (
-              <button key={va} onClick={() => toggleVA(va)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${on ? "bg-white shadow-sm border-2" : "bg-slate-50 border border-slate-200 text-slate-400"}`}
-                style={on ? { borderColor: c, color: c } : {}}>
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: on ? c : "#cbd5e1" }} />
-                {va.split(" ")[0]}
-                {INACTIVE_VAS.has(va) && <span className="opacity-50 text-[9px]">&nbsp;(inactive)</span>}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {/* No date buttons here — the page's period bar governs the range.
-              This only chooses how finely the range is bucketed. */}
-          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5">
-            {(["auto", "daily", "weekly", "monthly"] as const).map(g => (
-              <button key={g} onClick={() => setGranMode(g)}
-                title={g === "auto" ? "Bucket size follows the selected period" : undefined}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${granMode === g ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                {g === "auto" ? `Auto (${autoGran})` : g.charAt(0).toUpperCase() + g.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      {n === 0 ? (
-        <div className="h-44 flex items-center justify-center text-slate-300 text-sm">No data for this selection</div>
-      ) : (
-        <div className="relative select-none">
-          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
-            {[0, 0.25, 0.5, 0.75, 1].map(v => {
-              const y = yOf(maxV * v);
-              return <g key={v}>
-                <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
-                <text x={PL - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxV * v)}</text>
-              </g>;
-            })}
-            {series.map(s => {
-              const poly = s.data.map((v, i) => `${xOf(i)},${yOf(v)}`).join(" ");
-              return <polyline key={s.va} points={poly} fill="none" stroke={s.color}
-                strokeWidth={INACTIVE_VAS.has(s.va) ? 1.5 : 2.5}
-                strokeOpacity={INACTIVE_VAS.has(s.va) ? 0.45 : 1}
-                strokeLinejoin="round" strokeLinecap="round" />;
-            })}
-            {periods.map((p, i) => {
-              if (i % every !== 0 && i !== n - 1) return null;
-              return <text key={p} x={xOf(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="#94a3b8">{pkLabel(p)}</text>;
-            })}
-            {periods.map((_, i) => {
-              const x = xOf(i);
-              const bw = n > 1 ? cW / (n - 1) : cW;
-              return <rect key={i} x={x - bw / 2} y={PT} width={bw} height={cH} fill="transparent"
-                onMouseEnter={() => setTip({
-                  xi: x, key: periods[i],
-                  values: series.map(s => ({ va: s.va, count: s.data[i], color: s.color })).sort((a, b) => b.count - a.count),
-                })}
-                onMouseLeave={() => setTip(null)} />;
-            })}
-            {tip && series.map(s => {
-              const i = periods.indexOf(tip.key);
-              if (i < 0) return null;
-              return <circle key={s.va} cx={xOf(i)} cy={yOf(s.data[i])} r="3.5" fill={s.color} stroke="white" strokeWidth="2" />;
-            })}
-          </svg>
-          {tip && (
-            <div className="absolute pointer-events-none bg-slate-800 text-white text-xs px-3 py-2 rounded-xl shadow-xl z-10 min-w-[140px]"
-              style={{ left: `${(tip.xi / W) * 100}%`, bottom: "30px", transform: "translateX(-50%)" }}>
-              <div className="font-semibold text-slate-400 mb-1.5 text-[10px] uppercase tracking-wide">{pkLabel(tip.key)}</div>
-              {tip.values.map(v => (
-                <div key={v.va} className="flex items-center justify-between gap-4">
-                  <span className="flex items-center gap-1.5 text-slate-300">
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: v.color }} />
-                    {v.va.split(" ")[0]}
-                  </span>
-                  <span className="font-bold tabular-nums">{v.count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      <div className="flex flex-wrap gap-4 pt-1.5 border-t border-slate-100">
-        {series.map(s => (
-          <span key={s.va} className="flex items-center gap-1.5 text-xs text-slate-500">
-            <span className="w-6 h-0.5 inline-block rounded-full" style={{ background: s.color }} />
-            {s.va}
-            {INACTIVE_VAS.has(s.va) && <span className="text-[9px] text-slate-400">&nbsp;(inactive)</span>}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Live & Accurate grouped bar chart ─────────────────────────────────────────
 function LiveAccurateChart({ rows }: { rows: Row[] }) {
   const vaNames = Object.keys(VA_COLORS);
@@ -1253,14 +1231,9 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         ))}
       </div>
 
-      {/* ── Activity over time (full width) ── */}
-      <Card title="Activity over time" sub={`Entries stacked by VA · ${label}`}>
-        {cur.length ? <ActivityChart rows={cur} range={range} vaList={vaList} /> : <Empty h="h-56" />}
-      </Card>
-
-      {/* ── Listings per day — VA comparison (full width) ── */}
-      <Card title="Listings per day" sub={`Toggle VAs to compare · ${label}`}>
-        <VAComparisonChart rows={cur} />
+      {/* ── Listings over time (full width) ── */}
+      <Card title="Listings over time" sub={`Volume and per-VA split · ${label}`}>
+        <ActivityTimeline rows={cur} range={range} vaList={vaList} periodLabel={label} />
       </Card>
 
       {/* ── Accurate & LIVE listings (full width) ── */}
