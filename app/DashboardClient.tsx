@@ -10,9 +10,9 @@ import DashboardHome from "./DashboardHome";
 import RecordsTable from "./RecordsTable";
 import QAReviewTable from "./QAReviewTable";
 import {
-  Row,
+  Row, vaColor, fmtNum,
   parseRowDate, toYMD, startOfWeek, filterByRange,
-  GLITCH_LABELS, GLITCH_PILL,
+  GLITCH_LABELS, GLITCH_PILL, GLITCH_ACCENT,
 } from "@/lib/dash";
 import { exportCSV } from "@/lib/csv";
 
@@ -137,23 +137,145 @@ function TrendChart({ rows, range }: { rows: Row[]; range: [Date, Date] | null }
 }
 
 // ── Glitch row ───────────────────────────────────────────────────────────────
-function GlitchRow({ g, detail, onNavigate }: { g: Glitch; detail?: boolean; onNavigate?: (row: Row) => void }) {
+// ── QA & Glitches table ─────────────────────────────────────────────────────
+// One row per issue, but with enough columns to actually investigate from —
+// previously this was Type + one detail line + VA + Facility, which meant
+// opening the record just to see the date, listing ID, or which FB group/URL
+// was involved. All of that is already on g.row; it just wasn't surfaced.
+type GlitchSortKey = "type" | "date" | "va" | "facility" | "listingId" | "group";
+const GLITCH_COLS: { key: GlitchSortKey; label: string; w: number }[] = [
+  { key: "type", label: "Type", w: 150 },
+  { key: "date", label: "Date", w: 100 },
+  { key: "va", label: "VA", w: 130 },
+  { key: "facility", label: "Facility", w: 220 },
+  { key: "listingId", label: "Listing ID", w: 100 },
+  { key: "group", label: "FB Group", w: 190 },
+];
+
+function glitchSortVal(g: Glitch, key: GlitchSortKey): string {
+  switch (key) {
+    case "type": return GLITCH_LABELS[g.type] ?? g.type;
+    case "date": return g.row["Date"] ?? "";
+    case "va": return g.row["VA Name"] ?? "";
+    case "facility": return g.row["Facility Name"] ?? "";
+    case "listingId": return g.row["SLF Listing ID"] ?? "";
+    case "group": return g.row["Facebook Group Name"] ?? "";
+  }
+}
+
+function GlitchTable({ glitches, onNavigate }: { glitches: Glitch[]; onNavigate: (row: Row) => void }) {
+  const [sort, setSort] = useState<{ key: GlitchSortKey; dir: "asc" | "desc" }>({ key: "date", dir: "desc" });
+  const toggleSort = (key: GlitchSortKey) =>
+    setSort(s => s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
+
+  const sorted = useMemo(() => {
+    const mul = sort.dir === "asc" ? 1 : -1;
+    return [...glitches].sort((a, b) => {
+      if (sort.key === "date") {
+        const ad = parseRowDate(a.row["Date"]), bd = parseRowDate(b.row["Date"]);
+        return mul * ((ad ? +ad : 0) - (bd ? +bd : 0));
+      }
+      return mul * glitchSortVal(a, sort.key).localeCompare(glitchSortVal(b, sort.key), undefined, { numeric: true, sensitivity: "base" });
+    });
+  }, [glitches, sort]);
+
+  const exportRows = () => exportCSV(
+    sorted.map(g => ({
+      Type: GLITCH_LABELS[g.type] ?? g.type,
+      Detail: g.detail,
+      Date: g.row["Date"] ?? "",
+      "VA Name": g.row["VA Name"] ?? "",
+      "Facility Name": g.row["Facility Name"] ?? "",
+      "SLF Listing ID": g.row["SLF Listing ID"] ?? "",
+      "FB Group": g.row["Facebook Group Name"] ?? "",
+      "FB Post URL": g.row["Direct Facebook Post URL"] ?? "",
+      "WP Post Time": g.row["WP- Post time"] ?? "",
+    })),
+    `slf-qa-issues-${new Date().toISOString().slice(0, 10)}.csv`,
+  );
+
   return (
-    <div onClick={() => onNavigate?.(g.row)}
-      className={`px-5 py-3 flex flex-wrap items-start gap-3 hover:bg-slate-50/60 transition-colors ${onNavigate ? "cursor-pointer group/gr" : ""}`}>
-      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${GLITCH_PILL[g.type] ?? "bg-slate-100 text-slate-600"}`}>
-        {GLITCH_LABELS[g.type] ?? g.type}
-      </span>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs text-slate-600 truncate">{g.detail}</p>
-        {detail && (
-          <div className="flex flex-wrap gap-3 mt-0.5">
-            {g.row["VA Name"] && <span className="text-[10px] text-slate-400">{g.row["VA Name"]}</span>}
-            {g.row["Facility Name"] && <span className="text-[10px] text-slate-400 truncate max-w-[180px]">{g.row["Facility Name"]}</span>}
-          </div>
-        )}
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-bold text-slate-800">{fmtNum(glitches.length)} issues</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Click a row to jump to it in Records · click a column header to sort</p>
+        </div>
+        <button onClick={exportRows}
+          className="flex-shrink-0 flex items-center gap-1.5 bg-white border border-slate-200 hover:border-green-400 hover:text-green-700 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl transition-colors">
+          Export CSV
+        </button>
       </div>
-      {onNavigate && <span className="text-[10px] text-green-600 font-semibold opacity-0 group-hover/gr:opacity-100 transition-opacity flex-shrink-0">View →</span>}
+      {/* Viewport-relative, not a fixed height — a tall external monitor
+          should show more rows, not more empty space. */}
+      <div className="overflow-auto max-h-[65vh]">
+        <table className="w-full text-xs border-separate border-spacing-0" style={{ minWidth: "100%" }}>
+          <thead>
+            <tr className="h-9">
+              {GLITCH_COLS.map(c => {
+                const on = sort.key === c.key;
+                return (
+                  <th key={c.key} style={{ width: c.w, minWidth: c.w }}
+                    className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 text-left">
+                    <button onClick={() => toggleSort(c.key)}
+                      className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${on ? "text-green-700" : "text-slate-400 hover:text-slate-600"}`}>
+                      {c.label}
+                      {on && <span>{sort.dir === "asc" ? "↑" : "↓"}</span>}
+                    </button>
+                  </th>
+                );
+              })}
+              <th className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">FB Post URL</th>
+              <th className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">Detail</th>
+              <th className="sticky top-0 right-0 z-20 bg-slate-50 border-b border-l border-slate-200 px-3" style={{ width: 60 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((g, i) => {
+              const url = g.row["Direct Facebook Post URL"]?.trim();
+              const accent = GLITCH_ACCENT[g.type] ?? "#94a3b8";
+              return (
+                <tr key={i} onClick={() => onNavigate(g.row)}
+                  className="cursor-pointer hover:bg-slate-50/80 transition-colors group/gr bg-white"
+                  style={{ boxShadow: `inset 3px 0 0 ${accent}` }}>
+                  <td className="border-b border-slate-100 px-3 py-2">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${GLITCH_PILL[g.type] ?? "bg-slate-100 text-slate-600"}`}>
+                      {GLITCH_LABELS[g.type] ?? g.type}
+                    </span>
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-600 whitespace-nowrap">
+                    {(() => { const d = parseRowDate(g.row["Date"]); return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : <span className="text-slate-300">—</span>; })()}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-700 truncate">
+                    {g.row["VA Name"]
+                      ? <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: vaColor(g.row["VA Name"]) }} />{g.row["VA Name"]}</span>
+                      : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-600 truncate" title={g.row["Facility Name"]}>
+                    {g.row["Facility Name"]?.trim() || <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-600 tabular-nums">
+                    {g.row["SLF Listing ID"]?.trim() || <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-600 truncate" title={g.row["Facebook Group Name"]}>
+                    {g.row["Facebook Group Name"]?.trim() || <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 truncate max-w-[220px]">
+                    {url
+                      ? <a href={url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                          className="text-green-600 hover:underline" title={url}>{url.replace(/^https?:\/\/(www\.)?/, "").slice(0, 34)}…</a>
+                      : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-slate-500 truncate max-w-[260px]" title={g.detail}>{g.detail}</td>
+                  <td className="border-b border-slate-100 px-3 py-2 text-right">
+                    <span className="text-[10px] text-green-600 font-semibold opacity-0 group-hover/gr:opacity-100 transition-opacity whitespace-nowrap">View →</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -475,17 +597,7 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
                       <p className="text-sm text-slate-400">{dateLabel}</p>
                     </div>
                   ) : (
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                      <div className="px-5 py-4 border-b border-slate-100">
-                        <h2 className="font-bold text-slate-800">{filteredGlitches.length} issues</h2>
-                        <p className="text-xs text-slate-400 mt-0.5">{dateLabel}</p>
-                      </div>
-                      {/* Viewport-relative, not a fixed 600px — a tall external
-                          monitor should show more rows, not more empty space. */}
-                      <div className="divide-y divide-slate-50 max-h-[65vh] overflow-y-auto">
-                        {filteredGlitches.map((g, i) => <GlitchRow key={i} g={g} detail onNavigate={goToRecord}/>)}
-                      </div>
-                    </div>
+                    <GlitchTable glitches={filteredGlitches} onNavigate={goToRecord} />
                   )}
                 </div>
               )}
