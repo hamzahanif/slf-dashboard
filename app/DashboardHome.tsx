@@ -538,55 +538,6 @@ function Funnel({ rows }: { rows: Row[] }) {
   );
 }
 
-// ── VA leaderboard — click a row to filter the whole page ─────────────────────
-function Leaderboard({ rows, selected, onToggle }: { rows: Row[]; selected: Set<string>; onToggle: (va: string) => void }) {
-  const per = useMemo(() => {
-    const m = new Map<string, Row[]>();
-    for (const r of rows) { const v = vaOf(r); if (!m.has(v)) m.set(v, []); m.get(v)!.push(r); }
-    return [...m.entries()].map(([va, rs]) => ({
-      va, total: rs.length,
-      live: rs.filter(isLive).length,
-      acc: rs.filter(isAccurate).length,
-      days: new Set(rs.map(r => r["Date"]?.slice(0, 10)).filter(Boolean)).size,
-    })).map(x => ({ ...x, liveRate: pct(x.live, x.total), perDay: x.days ? +(x.total / x.days).toFixed(1) : 0 }))
-      .sort((a, b) => b.total - a.total);
-  }, [rows]);
-  if (!per.length) return <Empty />;
-  const max = Math.max(...per.map(p => p.total), 1);
-  const medal = ["🥇", "🥈", "🥉"];
-  return (
-    <div className="space-y-1">
-      {per.map((p, i) => {
-        const c = vaColor(p.va), on = selected.has(p.va), dim = selected.size > 0 && !on;
-        return (
-          <button key={p.va} onClick={() => onToggle(p.va)}
-            className={`w-full text-left px-2 py-2 rounded-xl transition-all ${on ? "bg-green-50 ring-1 ring-green-200" : "hover:bg-slate-50"} ${dim ? "opacity-40" : ""}`}>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs w-5 flex-shrink-0">{medal[i] ?? <span className="text-slate-300 font-bold">{i + 1}</span>}</span>
-              <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }} />
-              <span className={`text-xs font-semibold truncate flex-1 ${INACTIVE_VAS.has(p.va) ? "text-slate-400" : "text-slate-700"}`}>{p.va}</span>
-              {INACTIVE_VAS.has(p.va) && <span className="text-[9px] font-bold px-1.5 py-px rounded-full bg-slate-100 text-slate-400 border border-slate-200 flex-shrink-0">Inactive</span>}
-              <span className="text-xs font-black tabular-nums text-slate-800 flex-shrink-0">{fmtNum(p.total)}</span>
-            </div>
-            <div className="flex items-center gap-2 pl-7">
-              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden flex">
-                <div className="h-full transition-all duration-500" style={{ width: `${(p.live / max) * 100}%`, background: c }} />
-                <div className="h-full transition-all duration-500" style={{ width: `${((p.total - p.live) / max) * 100}%`, background: c, opacity: .25 }} />
-              </div>
-              <span className="text-[10px] tabular-nums text-slate-400 w-24 text-right flex-shrink-0">
-                <b className="text-slate-600">{p.liveRate}%</b> live · {p.perDay}/d
-              </span>
-            </div>
-          </button>
-        );
-      })}
-      <p className="text-[10px] text-slate-400 pt-2 mt-1 border-t border-slate-100">
-        Solid = verified live, faded = remainder. Click a VA to filter the page.
-      </p>
-    </div>
-  );
-}
-
 // ── Publishing rhythm: day-of-week × hour heatmap of WP post times ────────────
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function PublishHeatmap({ rows }: { rows: Row[] }) {
@@ -757,19 +708,7 @@ function DataHealth({ rows }: { rows: Row[] }) {
   );
 }
 
-// ── VA Performance section (merged in from the old standalone Performance tab) ─
-interface VAStat { vaName: string; count: number; rows: Row[]; }
-function toTitleCase(s: string) { return s.replace(/\b\w/g, c => c.toUpperCase()); }
-function buildStats(rows: Row[]): VAStat[] {
-  const m = new Map<string, { display: string; rows: Row[] }>();
-  for (const r of rows) {
-    const raw = r["VA Name"]?.trim() || r["_sourceSheet"]?.trim() || "Unknown";
-    const key = raw.toLowerCase();
-    if (!m.has(key)) m.set(key, { display: toTitleCase(raw), rows: [] });
-    m.get(key)!.rows.push(r);
-  }
-  return Array.from(m.values()).map(({ display, rows: r }) => ({ vaName: display, count: r.length, rows: r })).sort((a, b) => b.count - a.count);
-}
+// ── VA Performance section ────────────────────────────────────────────────────
 type Bucket = "approved" | "pending" | "rejected" | "none";
 function getBucket(r: Row): Bucket {
   const v = (r["Comment Status"] ?? "").toLowerCase();
@@ -780,65 +719,191 @@ function getBucket(r: Row): Bucket {
   return "none";
 }
 // ── Live & Accurate grouped bar chart ─────────────────────────────────────────
+// Three bars per VA: everything they logged, how much went live, and how much
+// went live *with* a listing ID (the accurate subset). Total is deliberately
+// the recessive grey — it is the denominator, not an achievement.
 function LiveAccurateChart({ rows }: { rows: Row[] }) {
-  const vaNames = Object.keys(VA_COLORS);
+  const [tip, setTip] = useState<{ x: number; y: number; va: string; label: string; v: number; share: number | null } | null>(null);
   const stats = useMemo(() => {
-    return vaNames.map(va => {
+    return Object.keys(VA_COLORS).map(va => {
       const vaRows = rows.filter(r => (r["VA Name"]?.trim() || r["_sourceSheet"]?.trim()) === va);
       const total = vaRows.length;
-      const live = vaRows.filter(r => /live/i.test(r["Handoff Notes"] ?? "")).length;
-      const passed = vaRows.filter(r => /live/i.test(r["Handoff Notes"] ?? "") && !!r["SLF Listing ID"]?.trim()).length;
-      return { va, total, live, passed, livePct: total ? Math.round((live / total) * 100) : 0, passedPct: total ? Math.round((passed / total) * 100) : 0 };
-    }).filter(s => s.total > 0);
+      const live = vaRows.filter(isLive).length;
+      const passed = vaRows.filter(isAccurate).length;
+      return { va, total, live, passed, livePct: pct(live, total), passedPct: pct(passed, total) };
+    }).filter(s => s.total > 0).sort((a, b) => b.total - a.total);
   }, [rows]);
 
-  if (!stats.length) return <div className="h-44 flex items-center justify-center text-slate-300 text-sm">No data</div>;
+  if (!stats.length) return <Empty h="h-56" />;
 
-  const W = 560, H = 210, PT = 24, PR = 12, PB = 36, PL = 40;
+  const W = 1000, H = 300, PT = 24, PR = 16, PB = 48, PL = 44;
   const cW = W - PL - PR, cH = H - PT - PB;
   const maxV = Math.max(...stats.map(s => s.total), 1);
   const groupW = cW / stats.length;
-  const barW = Math.min(groupW * 0.22, 22);
-  const gap = 2;
+  const barW = Math.min(46, groupW / 4.2);
   const yOf = (v: number) => PT + cH - (v / maxV) * cH;
+
+  const SERIES = [
+    { key: "Total", color: "#cbd5e1", get: (s: typeof stats[0]) => s.total, share: false },
+    { key: "Live", color: "#16a34a", get: (s: typeof stats[0]) => s.live, share: true },
+    { key: "Accurate", color: "#2563eb", get: (s: typeof stats[0]) => s.passed, share: true },
+  ];
 
   return (
     <div className="space-y-3">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
-        {[0, 0.25, 0.5, 0.75, 1].map(v => {
-          const y = yOf(maxV * v);
-          return <g key={v}>
-            <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" />
-            <text x={PL - 4} y={y + 4} textAnchor="end" fontSize="9" fill="#94a3b8">{Math.round(maxV * v)}</text>
-          </g>;
-        })}
-        {stats.map((s, i) => {
-          const cx = PL + groupW * (i + 0.5);
-          const totalGroupW = 3 * barW + 2 * gap;
-          const lx = cx - totalGroupW / 2;
-          const x1 = lx, x2 = lx + barW + gap, x3 = lx + 2 * (barW + gap);
-          const totalH = (s.total / maxV) * cH;
-          const liveH = (s.live / maxV) * cH;
-          const passedH = (s.passed / maxV) * cH;
-          return (
-            <g key={s.va}>
-              <rect x={x1} y={yOf(s.total)} width={barW} height={totalH} fill="#e2e8f0" rx="2" />
-              <rect x={x2} y={yOf(s.live)} width={barW} height={liveH} fill="#16a34a" rx="2" />
-              {s.livePct > 0 && <text x={x2 + barW / 2} y={yOf(s.live) - 3} textAnchor="middle" fontSize="8" fontWeight="700" fill="#16a34a">{s.livePct}%</text>}
-              <rect x={x3} y={yOf(s.passed)} width={barW} height={passedH} fill="#2563eb" rx="2" />
-              {s.passedPct > 0 && <text x={x3 + barW / 2} y={yOf(s.passed) - 3} textAnchor="middle" fontSize="8" fontWeight="700" fill="#2563eb">{s.passedPct}%</text>}
-              <text x={cx} y={H - PB + 14} textAnchor="middle" fontSize="9" fill={INACTIVE_VAS.has(s.va) ? "#94a3b8" : "#64748b"} fontWeight="500">{s.va.split(" ")[0]}</text>
-            </g>
-          );
-        })}
-      </svg>
-      <div className="flex flex-wrap items-center gap-5 pt-1.5 border-t border-slate-100">
-        {[{ color: "#e2e8f0", label: "Total" }, { color: "#16a34a", label: "Live" }, { color: "#2563eb", label: "Passed (accurate)" }].map(l => (
-          <span key={l.label} className="flex items-center gap-1.5 text-xs text-slate-500">
+      <div className="overflow-x-auto">
+        <div className="relative min-w-[560px]">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible" onMouseLeave={() => setTip(null)}>
+            {[0, .25, .5, .75, 1].map(v => {
+              const y = yOf(maxV * v);
+              return <g key={v}>
+                <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#f1f5f9" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                <text x={PL - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#94a3b8">{Math.round(maxV * v)}</text>
+              </g>;
+            })}
+            {stats.map((s, i) => {
+              const cx = PL + groupW * i + groupW / 2;
+              return (
+                <g key={s.va}>
+                  {SERIES.map((ser, bi) => {
+                    const v = ser.get(s);
+                    const x = cx - barW * 1.5 + bi * barW;
+                    const w = barW - 6, h = (v / maxV) * cH, y = yOf(v);
+                    const share = ser.share ? pct(v, s.total) : null;
+                    return (
+                      <g key={ser.key}>
+                        <rect x={x} y={y} width={w} height={h} rx="4" fill={ser.color}
+                          onMouseEnter={() => setTip({ x: x + w / 2, y, va: s.va, label: ser.key, v, share })} />
+                        {share !== null && share > 0 && (
+                          <text x={x + w / 2} y={y - 6} textAnchor="middle" fontSize="10" fontWeight="700" fill={ser.color}>{share}%</text>
+                        )}
+                      </g>
+                    );
+                  })}
+                  <text x={cx} y={H - PB + 20} textAnchor="middle" fontSize="12" fontWeight="600"
+                    fill={INACTIVE_VAS.has(s.va) ? "#94a3b8" : "#334155"}>{s.va}</text>
+                  <text x={cx} y={H - PB + 35} textAnchor="middle" fontSize="10" fill="#94a3b8">{fmtNum(s.total)} entries</text>
+                </g>
+              );
+            })}
+          </svg>
+          {tip && (
+            <div className="absolute pointer-events-none bg-slate-900 text-white text-[11px] px-3 py-2 rounded-xl shadow-2xl z-20 whitespace-nowrap"
+              style={{ left: `${(tip.x / W) * 100}%`, top: `${(tip.y / H) * 100}%`, transform: "translate(-50%, -115%)" }}>
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">{tip.va}</div>
+              <div className="mt-0.5">{tip.label} <b className="tabular-nums">{fmtNum(tip.v)}</b>
+                {tip.share !== null && <span className="text-slate-400"> · {tip.share}% of their entries</span>}</div>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-5 pt-2 border-t border-slate-100">
+        {SERIES.map(l => (
+          <span key={l.key} className="flex items-center gap-1.5 text-xs text-slate-500">
             <span className="w-3 h-3 rounded-sm flex-shrink-0 inline-block" style={{ background: l.color }} />
-            {l.label}
+            {l.key === "Accurate" ? "Accurate (live + listing ID)" : l.key}
           </span>
         ))}
+        <span className="text-[11px] text-slate-400 ml-auto">% is that VA&apos;s share of their own entries.</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Overall performance — ranked bars + summary table ─────────────────────────
+// Ranks VAs by verified-live output rather than raw volume: logging a lot of
+// entries that never go live is not performance. The table underneath carries
+// the counts the bars deliberately leave out.
+function OverallPerformance({ rows }: { rows: Row[] }) {
+  const [tip, setTip] = useState<{ i: number; va: string; text: string } | null>(null);
+  const per = useMemo(() => {
+    const m = new Map<string, { total: number; listings: number; live: number; passed: number }>();
+    for (const r of rows) {
+      const va = vaOf(r);
+      if (!m.has(va)) m.set(va, { total: 0, listings: 0, live: 0, passed: 0 });
+      const s = m.get(va)!;
+      s.total++;
+      if (hasListing(r)) s.listings++;
+      if (isLive(r)) s.live++;
+      if (isAccurate(r)) s.passed++;
+    }
+    return [...m.entries()].map(([va, s]) => ({
+      va, ...s, livePct: pct(s.live, s.total), passedPct: pct(s.passed, s.total),
+    })).sort((a, b) => b.live - a.live);
+  }, [rows]);
+
+  if (!per.length) return <Empty h="h-40" />;
+  const maxLive = Math.max(...per.map(p => p.live), 1);
+  const grandLive = per.reduce((a, p) => a + p.live, 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Ranked bars */}
+      <div className="space-y-1.5">
+        {per.map((p, i) => {
+          const c = vaColor(p.va);
+          return (
+            <div key={p.va} className="relative flex items-center gap-3"
+              onMouseEnter={() => setTip({ i, va: p.va, text: `${fmtNum(p.live)} live of ${fmtNum(p.total)} (${p.livePct}%) · ${fmtNum(p.passed)} accurate (${p.passedPct}%)` })}
+              onMouseLeave={() => setTip(null)}>
+              <span className="w-5 text-[11px] font-bold text-slate-300 tabular-nums text-right flex-shrink-0">{i + 1}</span>
+              <span className={`w-28 sm:w-36 text-xs font-semibold truncate flex-shrink-0 ${INACTIVE_VAS.has(p.va) ? "text-slate-400" : "text-slate-700"}`}>
+                {p.va}
+              </span>
+              <div className="flex-1 h-7 bg-slate-100 rounded-lg overflow-hidden relative min-w-0">
+                <div className="h-full rounded-lg transition-all duration-500" style={{ width: `${(p.live / maxLive) * 100}%`, background: c }} />
+              </div>
+              <span className="w-24 sm:w-28 text-[11px] text-slate-500 tabular-nums text-right flex-shrink-0">
+                <b className="text-slate-700">{fmtNum(p.live)}</b> live · {p.livePct}%
+              </span>
+              {tip?.i === i && (
+                <div className="absolute left-1/3 -top-1 pointer-events-none bg-slate-900 text-white text-[11px] px-3 py-2 rounded-xl shadow-2xl z-20 whitespace-nowrap -translate-y-full">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-400">{tip.va}</div>
+                  <div className="mt-0.5">{tip.text}</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Summary table */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full text-sm min-w-[560px]">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              {["VA", "Entries", "Listings", "Live", "Live %", "Accurate", "Accurate %", "Share of live"].map((h, i) => (
+                <th key={h} className={`${i === 0 ? "text-left" : "text-right"} px-4 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {per.map(p => {
+              const c = vaColor(p.va);
+              return (
+                <tr key={p.va} className="hover:bg-slate-50/60 transition-colors">
+                  <td className="px-4 py-2.5">
+                    <span className="flex items-center gap-2 font-medium text-slate-800">
+                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: c }} />
+                      <span className={INACTIVE_VAS.has(p.va) ? "text-slate-400" : ""}>{p.va}</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{fmtNum(p.total)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{fmtNum(p.listings)}</td>
+                  <td className="px-4 py-2.5 text-right font-bold tabular-nums" style={{ color: c }}>{fmtNum(p.live)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={`font-bold tabular-nums ${p.livePct >= 70 ? "text-green-600" : p.livePct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.livePct}%</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">{fmtNum(p.passed)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={`font-bold tabular-nums ${p.passedPct >= 70 ? "text-green-600" : p.passedPct >= 40 ? "text-amber-600" : "text-red-500"}`}>{p.passedPct}%</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">{pct(p.live, grandLive)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -974,32 +1039,6 @@ function VAScoreboard({ rows }: { rows: Row[] }) {
   );
 }
 
-// ── VA daily breakdown ────────────────────────────────────────────────────────
-function VADailyBreakdown({ va }: { va: VAStat }) {
-  const c = vaColor(va.vaName);
-  const byDay = new Map<string, number>();
-  for (const r of va.rows) { const d = parseRowDate(r["Date"]); if (d) { const k = toYMD(d); byDay.set(k, (byDay.get(k) ?? 0) + 1); } }
-  const sorted = Array.from(byDay.entries()).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 10);
-  if (!sorted.length) return null;
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-        <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: c }}/>
-        <h3 className="font-semibold text-slate-800 text-sm">{va.vaName}</h3>
-        <span className="ml-auto text-xs text-slate-400">{va.count.toLocaleString()} total</span>
-      </div>
-      <div className="px-5 py-4 flex flex-wrap gap-2">
-        {sorted.map(([ymd, n]) => (
-          <div key={ymd} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
-            <span className="text-slate-400">{new Date(ymd + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-            <span className="font-bold" style={{ color: c }}>{n}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Main dashboard ────────────────────────────────────────────────────────────
 export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; userName?: string }) {
   const [preset, setPreset] = useState<Preset>("30d");
@@ -1055,7 +1094,6 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
   };
   const K = useMemo(() => kpi(cur), [cur]);
   const P = useMemo(() => kpi(pre), [pre]);
-  const vaStats = useMemo(() => buildStats(cur), [cur]);
   const hasPrior = !!prior && pre.length > 0;
   const rel = (a: number, b: number) => (!hasPrior || !b) ? null : Math.round(((a - b) / b) * 100);
   const ptd = (a: number, b: number) => !hasPrior ? null : a - b;
@@ -1138,7 +1176,6 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
     ...(q.trim() ? [{ label: `“${q.trim()}”`, color: undefined, clear: () => setQ("") }] : []),
   ];
   const clearAll = () => { setVaSel(new Set()); setShiftSel(new Set()); setGroupSel(new Set()); setActionSel(new Set()); setOutcome("all"); setQ(""); };
-  const toggleVa = (va: string) => setVaSel(s => { const n = new Set(s); if (n.has(va)) n.delete(va); else n.add(va); return n; });
   const label = fmtRange(range, preset);
 
   // Every active filter, described in words, so the exported report states the
@@ -1231,24 +1268,14 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         ))}
       </div>
 
-      {/* ── Listings over time (full width) ── */}
-      <Card title="Listings over time" sub={`Volume and per-VA split · ${label}`}>
-        <ActivityTimeline rows={cur} range={range} vaList={vaList} periodLabel={label} />
-      </Card>
-
-      {/* ── Accurate & LIVE listings (full width) ── */}
-      <Card title="Accurate & LIVE listings" sub={`Live = "Live" in Handoff Notes · Accurate = has SLF Listing ID · ${label}`}>
-        <LiveAccurateChart rows={cur} />
-      </Card>
-
-      {/* ── VA Performance (merged from the old standalone Performance tab) ── */}
+      {/* ── VA PERFORMANCE ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 pt-3 mt-1 border-t border-slate-200">
         <span className="w-1 h-4 bg-green-600 rounded-full" />
         <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">VA Performance</h2>
       </div>
 
-      {/* ── VA Performance Comparison (full width) ── */}
-      <Card title="VA Performance Comparison" sub={`Ranked by total entries · ${label}`}
+      {/* 1 · VA Performance Comparison */}
+      <Card title="VA Performance Comparison" sub={`Sorted by total entries · filters apply · ${label}`}
         right={<ExportReport rows={cur} title="VA Performance Report"
           generatedBy={userName}
           filters={[
@@ -1258,7 +1285,28 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         <VAScoreboard rows={cur} />
       </Card>
 
-      {/* ── Data health (half) + Listing pipeline (half right) ── */}
+      {/* 2 · Listings over time — volume + per-VA split, own view controls */}
+      <Card title="Listings over time" sub={`New listings logged over time · ${label}`}>
+        <ActivityTimeline rows={cur} range={range} vaList={vaList} periodLabel={label} />
+      </Card>
+
+      {/* 3 · Accurate & LIVE listings */}
+      <Card title="Accurate & LIVE listings"
+        sub="LIVE = Handoff Notes “Live” · Accurate = live with an SLF Listing ID. Bars show counts; % is that VA’s share of their own entries.">
+        <LiveAccurateChart rows={cur} />
+      </Card>
+
+      {/* 4 · Overall performance */}
+      <Card title="Overall performance" sub={`Ranked by verified-live output · ${label}`}>
+        <OverallPerformance rows={cur} />
+      </Card>
+
+      {/* ── SUPPORTING DETAIL ──────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 pt-3 mt-1 border-t border-slate-200">
+        <span className="w-1 h-4 bg-slate-300 rounded-full" />
+        <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Data &amp; sources</h2>
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Card title="Data health" sub="Field completeness and duplicate checks on actionable records">
           <DataHealth rows={cur} />
@@ -1268,29 +1316,13 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         </Card>
       </div>
 
-      {/* ── Leaderboard + heatmap ── */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <Card title="VA leaderboard" sub={`Ranked by entries · ${label}`}
-          right={vaSel.size > 0 ? <button onClick={() => setVaSel(new Set())} className="text-[11px] text-red-500 hover:underline">Reset</button> : undefined}>
-          <Leaderboard rows={cur} selected={vaSel} onToggle={toggleVa} />
-        </Card>
-        <Card title="Publishing rhythm" sub="When listings actually go live on WordPress">
-          <PublishHeatmap rows={cur} />
-        </Card>
-      </div>
+      <Card title="Publishing rhythm" sub="When listings actually go live on WordPress">
+        <PublishHeatmap rows={cur} />
+      </Card>
 
-      {/* ── Top Facebook groups (full width — its former siblings, Shift split
-          and Action types, were removed as redundant with the filter bar above) ── */}
       <Card title="Top Facebook groups" sub="Click to filter the page">
         <RankedList items={groupItems} onPick={g => setGroupSel(s => { const n = new Set(s); if (n.has(g)) n.delete(g); else n.add(g); return n; })} selected={groupSel} max={8} />
       </Card>
-
-      <div>
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Daily activity by VA</h3>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {vaStats.map(va => <VADailyBreakdown key={va.vaName} va={va}/>)}
-        </div>
-      </div>
     </div>
   );
 }
