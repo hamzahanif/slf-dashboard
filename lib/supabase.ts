@@ -45,7 +45,13 @@ export async function fetchAllEntries(vaName?: string): Promise<Record<string, u
   const live = (r: any) => soft ? r.is("deleted_at", null) : r;
 
   const vaRows = await fetchPages(q => {
-    let r = live(q.select("*").neq("source_sheet", "QA Tracker")).order("date", { ascending: false });
+    // `id` as a tiebreaker makes the sort deterministic. Without it, thousands
+    // of rows share the same `date`, so Postgres is free to order ties
+    // differently between two separate paginated queries — the same row can
+    // then land in both page N and page N+1, producing a literal duplicate
+    // entry (and a false "Duplicate Listing ID" glitch against itself).
+    let r = live(q.select("*").neq("source_sheet", "QA Tracker"))
+      .order("date", { ascending: false }).order("id", { ascending: true });
     if (vaName) r = r.ilike("va_name", vaName);
     return r;
   });
@@ -60,7 +66,8 @@ export async function fetchAllEntries(vaName?: string): Promise<Record<string, u
 
   // Pull QA Tracker rows for VAs with no VA sheet of their own.
   const qaRows = await fetchPages(q => {
-    let r = live(q.select("*").eq("source_sheet", "QA Tracker")).order("date", { ascending: false });
+    let r = live(q.select("*").eq("source_sheet", "QA Tracker"))
+      .order("date", { ascending: false }).order("id", { ascending: true });
     if (vaName) r = r.ilike("va_name", vaName);
     return r;
   });
