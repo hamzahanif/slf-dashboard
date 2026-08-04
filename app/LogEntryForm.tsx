@@ -117,6 +117,9 @@ export default function LogEntryForm({ user }: Props) {
     if (!form.vaName) { setResult({ error: "Please select a VA." }); return; }
     if (!form["Facebook Group Name"]) { setResult({ error: "Facebook Group Name is required." }); return; }
     if (!form["Direct Facebook Post URL"]) { setResult({ error: "Direct Facebook Post URL is required." }); return; }
+    if (!form["Facility Name"].trim()) { setResult({ error: "Facility Name is required." }); return; }
+    if (!form["FB Account"].trim()) { setResult({ error: "FB Account is required." }); return; }
+    if (!form["SLF Listing ID"].trim()) { setResult({ error: "SLF Listing ID is required." }); return; }
 
     if (dupWarning && !confirmedDup) { setResult({ error: "This URL already exists. Click 'Submit anyway' to confirm." }); return; }
     setSessionExpired(false);   // clear any stale expiry banner on retry
@@ -158,9 +161,11 @@ export default function LogEntryForm({ user }: Props) {
         setResult({ ok: true });
         // Reset transient fields, keep Date and VA — a VA backfilling several
         // entries for one day shouldn't have to re-pick the date every time.
-        // Clear only what changes per entry. Shift, FB account and every
-        // dropdown go back to their default rather than to blank, so logging a
-        // run of similar entries doesn't mean re-picking the same answers.
+        // Everything typed by hand for THIS specific listing (group, URL,
+        // facility, listing ID, FB account) clears — it describes the entry
+        // just submitted, not the next one, and each is now a required field
+        // that must be entered fresh. Only Shift and the dropdown defaults
+        // carry over, since those are usually the same for a run of entries.
         setForm(f => ({
           ...f,
           Shift: f.Shift,
@@ -175,7 +180,7 @@ export default function LogEntryForm({ user }: Props) {
           "Promo Comment": VOCAB["Promo Comment"].default,
           // Reset to the current time for the next listing, not blank.
           "WP Post Time": nowTime(),
-          "FB Account": f["FB Account"],
+          "FB Account": "",
           "Handoff Notes": VOCAB["Handoff Notes"].default,
           "Status / Notes": VOCAB["Status / Notes"].default,
         }));
@@ -278,7 +283,7 @@ export default function LogEntryForm({ user }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Facility Name</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Facility Name <span className="text-red-400">*</span></label>
                   <input type="text" value={form["Facility Name"]}
                     onChange={e => set("Facility Name", e.target.value)}
                     placeholder="Name of the sober living facility"
@@ -305,7 +310,7 @@ export default function LogEntryForm({ user }: Props) {
                 )}
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">FB Account</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">FB Account <span className="text-red-400">*</span></label>
                 <input type="text" value={form["FB Account"]}
                   onChange={e => set("FB Account", e.target.value)}
                   placeholder="Facebook profile used"
@@ -320,7 +325,7 @@ export default function LogEntryForm({ user }: Props) {
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Listing</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">SLF Listing ID</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">SLF Listing ID <span className="text-red-400">*</span></label>
                 <input type="text" value={form["SLF Listing ID"]}
                   onChange={e => set("SLF Listing ID", e.target.value)}
                   placeholder="e.g. 1234"
