@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
+import Link from "next/link";
 import {
   Row, ALL_VAS, VA_COLORS, INACTIVE_VAS, vaColor, vaOf,
   hasListing, hasWp, isLive, isAccurate,
@@ -606,42 +607,6 @@ function PublishHeatmap({ rows }: { rows: Row[] }) {
   );
 }
 
-// ── Ranked list (FB groups, shifts, action types) — clickable to filter ───────
-function RankedList({ items, onPick, selected, max: showMax = 8, valueLabel = "entries" }: {
-  items: { label: string; v: number; sub?: string }[];
-  onPick?: (label: string) => void; selected?: Set<string>; max?: number; valueLabel?: string;
-}) {
-  if (!items.length) return <Empty h="h-32" />;
-  const top = items.slice(0, showMax);
-  const max = Math.max(...top.map(i => i.v), 1);
-  return (
-    <div className="space-y-1.5">
-      {top.map(it => {
-        const on = selected?.has(it.label);
-        const dim = selected && selected.size > 0 && !on;
-        const Wrap = onPick ? "button" : "div";
-        return (
-          <Wrap key={it.label} {...(onPick ? { onClick: () => onPick(it.label) } : {})}
-            className={`w-full text-left block rounded-lg px-2 py-1.5 transition-all ${onPick ? "hover:bg-slate-50 cursor-pointer" : ""} ${on ? "bg-green-50 ring-1 ring-green-200" : ""} ${dim ? "opacity-40" : ""}`}>
-            <div className="flex items-baseline justify-between gap-2 mb-1">
-              <span className="text-[11px] text-slate-700 truncate font-medium">{it.label}</span>
-              <span className="text-[11px] tabular-nums flex-shrink-0">
-                <b className="text-slate-800">{fmtNum(it.v)}</b>
-                {it.sub && <span className="text-slate-400"> · {it.sub}</span>}
-              </span>
-            </div>
-            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full rounded-full bg-slate-400 transition-all duration-500" style={{ width: `${(it.v / max) * 100}%` }} />
-            </div>
-          </Wrap>
-        );
-      })}
-      {items.length > showMax && <p className="text-[10px] text-slate-400 pt-1">+{items.length - showMax} more · {fmtNum(items.length)} total distinct</p>}
-      <span className="sr-only">{valueLabel}</span>
-    </div>
-  );
-}
-
 // ── Data health ───────────────────────────────────────────────────────────────
 function DataHealth({ rows }: { rows: Row[] }) {
   const h = useMemo(() => {
@@ -1086,16 +1051,6 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
     return [...known, ...extra];
   }, [cur]);
 
-  const groupItems = useMemo(() => {
-    const m = new Map<string, { v: number; live: number }>();
-    for (const r of cur) {
-      const g = (r["Facebook Group Name"] ?? "").trim(); if (!g) continue;
-      if (!m.has(g)) m.set(g, { v: 0, live: 0 });
-      const x = m.get(g)!; x.v++; if (isLive(r)) x.live++;
-    }
-    return [...m.entries()].map(([label, x]) => ({ label, v: x.v, sub: `${pct(x.live, x.v)}% live` })).sort((a, b) => b.v - a.v);
-  }, [cur]);
-
   // Auto-generated highlights.
   const insights = useMemo(() => {
     const out: { k: string; v: string; tone: string }[] = [];
@@ -1264,9 +1219,19 @@ export default function DashboardHome({ rows, userName = "" }: { rows: Row[]; us
         <PublishHeatmap rows={cur} />
       </Card>
 
-      <Card title="Top Facebook groups" sub="Click to filter the page">
-        <RankedList items={groupItems} onPick={g => setGroupSel(s => { const n = new Set(s); if (n.has(g)) n.delete(g); else n.add(g); return n; })} selected={groupSel} max={8} />
-      </Card>
+      <Link href="/groups"
+        className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex items-center justify-between gap-3 hover:border-green-300 hover:shadow-md transition-all group">
+        <div>
+          <h2 className="font-bold text-slate-800 flex items-center gap-2">
+            Facebook Groups
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">All {fmtNum(opts.groups.length)}</span>
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">Every group, sortable — plus who posts where most, per group</p>
+        </div>
+        <span className="text-sm font-semibold text-green-600 flex items-center gap-1 flex-shrink-0 group-hover:gap-1.5 transition-all">
+          Open <span aria-hidden>→</span>
+        </span>
+      </Link>
     </div>
   );
 }
