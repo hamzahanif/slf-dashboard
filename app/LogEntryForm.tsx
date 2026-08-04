@@ -279,10 +279,10 @@ export default function LogEntryForm({ user }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">FB Account</label>
-                  <input type="text" value={form["FB Account"]}
-                    onChange={e => set("FB Account", e.target.value)}
-                    placeholder="Facebook profile used"
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Facility Name</label>
+                  <input type="text" value={form["Facility Name"]}
+                    onChange={e => set("Facility Name", e.target.value)}
+                    placeholder="Name of the sober living facility"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400"
                   />
                 </div>
@@ -306,10 +306,10 @@ export default function LogEntryForm({ user }: Props) {
                 )}
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Facility Name</label>
-                <input type="text" value={form["Facility Name"]}
-                  onChange={e => set("Facility Name", e.target.value)}
-                  placeholder="Name of the sober living facility"
+                <label className="block text-xs font-medium text-slate-600 mb-1">FB Account</label>
+                <input type="text" value={form["FB Account"]}
+                  onChange={e => set("FB Account", e.target.value)}
+                  placeholder="Facebook profile used"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400"
                 />
               </div>
