@@ -190,6 +190,37 @@ export function rowKey(r: Row): string {
   ].join("||");
 }
 
+/** Facebook tracking/noise query params — carry no post identity, safe to drop. */
+const FB_NOISE_PARAMS = new Set([
+  "mibextid", "__cft__", "__tn__", "ref", "eid", "hrc", "notif_id", "notif_t",
+  "rdid", "fs", "s", "so", "locale", "paipv", "_rdc", "_rdr", "comment_tracking",
+]);
+
+/**
+ * Normalizes a Facebook post URL for duplicate comparison.
+ *
+ * Used to strip the query string entirely, which is correct for share/group
+ * links (the query is just tracking noise there) but wrong for
+ * `permalink.php?story_fbid=...&id=...` links, where the query string IS the
+ * post's identity — stripping it collapsed hundreds of distinct permalink.php
+ * posts down to one identical string, so every new one falsely matched every
+ * other one ("already submitted 200×+"). Now only known noise params are
+ * dropped; everything else survives, sorted so param order can't cause a
+ * false negative.
+ */
+export function normFbUrl(raw: string): string {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return "";
+  const stripped = trimmed.replace(/^https?:\/\//, "").replace(/^(www\.|m\.|web\.)/, "");
+  const qIdx = stripped.indexOf("?");
+  if (qIdx === -1) return stripped.replace(/\/$/, "");
+  const path = stripped.slice(0, qIdx).replace(/\/$/, "");
+  const params = new URLSearchParams(stripped.slice(qIdx + 1));
+  for (const k of [...params.keys()]) if (FB_NOISE_PARAMS.has(k)) params.delete(k);
+  const kept = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+  return kept.length ? `${path}?${kept.map(([k, v]) => `${k}=${v}`).join("&")}` : path;
+}
+
 /** Deep link to a listing's WordPress edit screen. */
 export function wpEditUrl(listingId: string) {
   return `https://soberlivingfinder.com/wp-admin/post.php?post=${encodeURIComponent(listingId.trim())}&action=edit`;

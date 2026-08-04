@@ -10,7 +10,7 @@ import DashboardHome from "./DashboardHome";
 import RecordsTable from "./RecordsTable";
 import QAReviewTable from "./QAReviewTable";
 import {
-  Row, vaColor, fmtNum,
+  Row, vaColor, fmtNum, normFbUrl,
   parseRowDate, toYMD, startOfWeek, filterByRange,
   GLITCH_LABELS, GLITCH_PILL, GLITCH_ACCENT,
 } from "@/lib/dash";
@@ -54,9 +54,6 @@ function getBucket(r: Row): Bucket {
   if (v.includes("reject") || v.includes("fail")) return "rejected";
   if (v.includes("pend")) return "pending";
   return "none";
-}
-function normUrl(u: string) {
-  return u.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^(www\.|m\.|web\.)/, "").replace(/\?.*$/, "").replace(/\/$/, "");
 }
 // ── Icons ──────────────────────────────────────────────────────────────────
 function Ic({ n, cls = "w-4 h-4" }: { n: string; cls?: string }) {
@@ -334,8 +331,8 @@ export default function DashboardClient({ user }: { user: SessionPayload }) {
   const dateRange = useMemo(() => getRange(preset, customStart, customEnd), [preset, customStart, customEnd]);
   const filteredRows = useMemo(() => filterByRange(rows, dateRange), [rows, dateRange]);
   const urlMatches = useMemo(() => {
-    const q = normUrl(checkUrl); if (!q) return [];
-    return rows.filter(r => { const u = r["Direct Facebook Post URL"]; return u && normUrl(u) === q; })
+    const q = normFbUrl(checkUrl); if (!q) return [];
+    return rows.filter(r => { const u = r["Direct Facebook Post URL"]; return u && normFbUrl(u) === q; })
       .map(r => ({ row: r, vaName: r["VA Name"]?.trim() || "Unknown", date: (() => { const d = parseRowDate(r["Date"]); return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"; })(), status: getBucket(r) }));
   }, [rows, checkUrl]);
   // Map _id → glitches for O(1) lookup in the Records table

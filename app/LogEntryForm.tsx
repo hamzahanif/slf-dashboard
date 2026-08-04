@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { SessionPayload } from "@/lib/session";
-import { toYMD, VOCAB, VA_SHIFT, VA_MEDIA_DEFAULT } from "@/lib/dash";
+import { toYMD, VOCAB, VA_SHIFT, VA_MEDIA_DEFAULT, normFbUrl } from "@/lib/dash";
 
 const VA_NAMES = ["Mico Real", "Muhammad Salman", "Abdul Rehman", "Fazeela"];
 
@@ -102,8 +102,7 @@ export default function LogEntryForm({ user }: Props) {
       const res = await fetch("/api/rows");
       const data = await res.json();
       const rows: { [k: string]: string }[] = data.rows ?? [];
-      const norm = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^(www\.|m\.|web\.)/, "").replace(/\?.*$/, "").replace(/\/$/, "");
-      const matches = rows.filter(r => r["Direct Facebook Post URL"] && norm(r["Direct Facebook Post URL"]) === norm(url));
+      const matches = rows.filter(r => r["Direct Facebook Post URL"] && normFbUrl(r["Direct Facebook Post URL"]) === normFbUrl(url));
       if (matches.length > 0) {
         const names = [...new Set(matches.map(r => r["VA Name"]?.trim()).filter(Boolean))].join(", ");
         setDupWarning(`⚠️ This URL was already submitted ${matches.length}× by: ${names}. Check before submitting.`);
