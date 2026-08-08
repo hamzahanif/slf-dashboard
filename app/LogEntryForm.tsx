@@ -31,6 +31,31 @@ function nowTime(): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+// A VA typically posts a run of listings to the same FB group in one sitting.
+// Remember whichever group they last used, per VA, so it pre-fills instead of
+// being retyped for every single entry — but only for today. Keyed by VA so
+// an admin switching between VAs never leaks one VA's group into another's
+// entry, and stamped with the date so it goes stale on its own once the day
+// turns over, rather than needing an explicit clear.
+const REMEMBERED_GROUP_PREFIX = "slf_last_fb_group";
+
+function readRememberedGroup(vaName: string): string {
+  if (!vaName || typeof window === "undefined") return "";
+  try {
+    const raw = window.localStorage.getItem(`${REMEMBERED_GROUP_PREFIX}:${vaName}`);
+    if (!raw) return "";
+    const { date, group } = JSON.parse(raw) as { date: string; group: string };
+    return date === today() ? (group ?? "") : "";
+  } catch { return ""; }
+}
+
+function rememberGroup(vaName: string, group: string) {
+  if (!vaName || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${REMEMBERED_GROUP_PREFIX}:${vaName}`, JSON.stringify({ date: today(), group }));
+  } catch { /* storage disabled or full — not worth surfacing an error for */ }
+}
+
 interface Props {
   user: SessionPayload;
 }
@@ -67,6 +92,18 @@ export default function LogEntryForm({ user }: Props) {
   const [dupWarning, setDupWarning] = useState<string | null>(null);
   const [confirmedDup, setConfirmedDup] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Pick up today's remembered group after mount, not in the initial useState —
+  // localStorage isn't available during server render, and reading it there
+  // would make the client's first render disagree with the server's and trip
+  // a hydration mismatch. Only runs for the non-admin case (a fixed VA); the
+  // admin picker re-reads on every VA change instead, below.
+  useEffect(() => {
+    if (isAdmin || !defaultVaName) return;
+    const g = readRememberedGroup(defaultVaName);
+    if (g) setForm(f => ({ ...f, "Facebook Group Name": g }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // How many listings this VA has already logged for the selected date, so
   // that's visible without leaving the form to check Records.
@@ -159,17 +196,23 @@ export default function LogEntryForm({ user }: Props) {
       const data = await res.json();
       if (data.ok) {
         setResult({ ok: true });
+        // Remember today's group for this VA so it survives the reset below
+        // and pre-fills the next entry — a VA posting a run of listings to
+        // the same group shouldn't have to retype it every single time.
+        rememberGroup(form.vaName, form["Facebook Group Name"]);
         // Reset transient fields, keep Date and VA — a VA backfilling several
         // entries for one day shouldn't have to re-pick the date every time.
-        // Everything typed by hand for THIS specific listing (group, URL,
-        // facility, listing ID, FB account) clears — it describes the entry
-        // just submitted, not the next one, and each is now a required field
-        // that must be entered fresh. Only Shift and the dropdown defaults
-        // carry over, since those are usually the same for a run of entries.
+        // Everything typed by hand for THIS specific listing (URL, facility,
+        // listing ID, FB account) clears — it describes the entry just
+        // submitted, not the next one, and each is now a required field that
+        // must be entered fresh. Facebook Group Name is the one exception:
+        // kept (and remembered above) rather than blanked, since it's usually
+        // unchanged across a whole run of entries. Shift and the dropdown
+        // defaults carry over for the same reason.
         setForm(f => ({
           ...f,
           Shift: f.Shift,
-          "Facebook Group Name": "",
+          "Facebook Group Name": f["Facebook Group Name"],
           "Direct Facebook Post URL": "",
           "Facility Name": "",
           "SLF Listing ID": "",
@@ -239,12 +282,14 @@ export default function LogEntryForm({ user }: Props) {
                     onChange={e => {
                       // Each VA works one fixed shift and has their own typical
                       // answer for Media Uploaded, so refill both when an admin
-                      // picks who they're logging for.
+                      // picks who they're logging for — and swap in THAT VA's
+                      // remembered group for today, not the previous VA's.
                       const va = e.target.value;
                       setForm(f => ({
                         ...f, vaName: va,
                         Shift: VA_SHIFT[va] ?? f.Shift,
                         "Media Uploaded": VA_MEDIA_DEFAULT[va] ?? VOCAB["Media Uploaded"].default,
+                        "Facebook Group Name": readRememberedGroup(va),
                       }));
                     }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white">
